@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="FoodShare student prototype. Discover surplus food, make a demo reservation and verify pickup. No real payments or real businesses.">
+  <meta name="theme-color" content="#264735">
+  <title>FoodShare — A second chance for good food</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="assets/qrcode.js" defer></script>
+  <script src="app.js" type="module"></script>
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+  <div class="demo-bar">A student project with fictional cafés and simulated payments. No real orders.</div>
+  <header class="site-header">
+    <a class="brand" href="#discover" aria-label="FoodShare home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M26 5C12 4 4 12 7 23c11 4 20-4 19-18Z" fill="currentColor"/><path d="m8 25 12-12" stroke="#f7f6ef" stroke-width="2" fill="none"/></svg>foodshare<span class="brand-dot">.</span></a>
+    <nav aria-label="Main navigation"><a href="#discover" data-nav="discover">Discover</a><a href="#pickups" data-nav="pickups">My pickups <span id="pickup-count"></span></a><a href="#cafe" data-nav="cafe">Café workspace</a><a href="#impact" data-nav="impact">Our impact</a></nav>
+    <span class="location">⌖ &nbsp;Astana, KZ</span>
+  </header>
+  <main id="main" tabindex="-1"></main>
+  <footer><a class="brand small" href="#discover">foodshare.</a><p>Good food deserves a second chance.</p><button class="text-button" id="about-button">About this prototype</button><span>SE-2404 · Project Management</span></footer>
+  <dialog id="modal" aria-labelledby="modal-title"><button class="modal-close" aria-label="Close dialog">×</button><div id="modal-content"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
