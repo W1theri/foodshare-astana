@@ -8,13 +8,13 @@ The app demonstrates surplus offer publishing, discovery, combined category/pric
 
 ## Run locally
 
-Use any static HTTP server to serve the `dist` directory. With Python 3:
+With Node.js 18 or later, run:
 
 ```sh
-python3 -m http.server 4173 --directory dist
+npm run dev
 ```
 
-Open http://localhost:4173. Use HTTP rather than opening index.html directly because the JavaScript uses modules. Normal browser storage must be available. All app assets except the optional map are bundled locally. The map requires an internet connection.
+On Windows PowerShell, use `npm.cmd run dev` if script execution is restricted. Open http://localhost:4173. The dev server serves the `dist` directory over HTTP. Browser storage must be available. All app assets except the optional map are bundled locally. The map requires an internet connection.
 
 ## Demonstration
 
@@ -29,7 +29,7 @@ To restart, use About this prototype, Reset demo data, then confirm the reset. R
 
 ## Verification
 
-Run `npm test` with Node.js 18 or later. There are ten domain tests covering inventory, invalid quantities, expiry, cancellation, duplicate verification and impact arithmetic. Browser verification also covers the full journey, publishing, validation, filters, persistence, QR generation and mobile overflow at 390 pixels. The task-local browser check and its evidence live under `endterm/.build`; they are not production dependencies.
+Run `npm test` with Node.js 18 or later. The ten domain tests cover inventory, invalid quantities, expiry, cancellation, duplicate verification and impact arithmetic.
 
 ## Boundaries
 
