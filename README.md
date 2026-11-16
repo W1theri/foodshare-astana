@@ -4,17 +4,17 @@ Project Management endterm prototype, group SE-2404. Instructor Alimova Balaussa
 
 Team: Ruslan Bolatbekuly (Product Owner), Ayana Markhabat (Scrum Master), Abilmansur Kassymov and Balgyn Yermakhanbet (Developers). These are the accountabilities in the supplied team plan.
 
-The app demonstrates surplus offer publishing, discovery, combined category/price/estimated-distance filters, an OpenStreetMap preview, reservations, QR tickets, cancellation, manual pickup verification and collection-based totals. All cafés are fictional. Payments are simulated.
+FoodShare demonstrates a shared catalogue of surplus food in Astana. Buyers can filter by category, pickup day, price and distance, save favorites, use the map, and reserve or cancel bags. The café can publish offers, manage availability and verify pickup tickets. All cafés are fictional and payments are simulated.
 
 ## Run locally
 
-With Node.js 18 or later, run:
+With Node.js 24 or later, run:
 
 ```sh
 npm run dev
 ```
 
-On Windows PowerShell, use `npm.cmd run dev` if script execution is restricted. Open http://localhost:4173. The dev server serves the `dist` directory over HTTP. Browser storage must be available. All app assets except the optional map are bundled locally. The map requires an internet connection.
+On Windows PowerShell, use `npm.cmd run dev` if script execution is restricted. Open http://localhost:4173. The server serves the UI and API from one origin and keeps a separate SQLite database under `.foodshare/`. Both café and buyer workflows are enabled in the local demo. Open a private browser window to test a second buyer session. The map requires internet access. Set `FOODSHARE_PORT` if port 4173 is in use.
 
 ## Demonstration
 
@@ -23,19 +23,19 @@ On Windows PowerShell, use `npm.cmd run dev` if script execution is restricted. 
 3. Show the QR ticket and copy its `FS-XXXXXXXX` code.
 4. Open Café workspace, paste the code and select Verify.
 5. Open Our impact. Two Qala Bakery bags produce 1.4 estimated kg, ₸2,400 demo revenue and ₸4,800 demo buyer savings.
-6. A second verification of the same code fails. A separate active reservation can be cancelled once, restoring its stock.
-
-To restart, use About this prototype, Reset demo data, then confirm the reset. Reset affects only this browser.
+6. A second verification of the same code fails. A separate active reservation can be cancelled once, restoring its stock. Pausing an offer hides it from Discover while its existing pickup tickets remain usable.
 
 ## Verification
 
-Run `npm test` with Node.js 18 or later. The ten domain tests cover inventory, invalid quantities, expiry, cancellation, duplicate verification and impact arithmetic.
+Run `npm test` with Node.js 24 or later. The tests cover domain arithmetic, cancellation, expiry, concurrent reservations for the last bag, ticket privacy, operator permissions, duplicate collection and shared photo uploads.
+
+## Hosted app
+
+`npm run build` bundles the existing pages and server API as a single Worker for Sites. D1 stores the shared catalogue. The hosted Café workspace uses ChatGPT sign-in for the site owner and checks that the verified email matches the server-only `CAFE_OWNER_EMAIL` value. Public visitors can browse and reserve as guests. Their tickets are scoped to their browser session, and favorites are stored in that browser. The hosted database starts from sample offers. Earlier browser-only demo orders are separate.
 
 ## Boundaries
 
-The app uses one versioned localStorage record. It has no shared server database, authentication, actual café authorization, real payment provider, live geolocation, camera scanner or push service. A QR code encodes a demo pickup token. The café workspace accepts that token manually or from an external reader. Early collection is allowed to support classroom demonstration. Estimated distances are illustrative and use a central Astana reference point. Example offers are seeded for the next calendar day in the device's local time.
-
-Production needs authenticated roles, server-side validation, atomic reservations, idempotent collection, payment reconciliation and partner operating procedures. Browser storage is editable and is not a security boundary. The production demonstration is public at https://foodshare-se2404.vercel.app. For defense, use this production address or the local copy. Unique Vercel deployment and preview URLs may require sign-in.
+The app is a classroom demo. A QR code encodes a pickup token for the café to enter. Early collection is allowed for demonstrations. Distances are illustrative and use a central Astana reference point. Shared pickup times are in Astana time.
 
 ## Credits
 
@@ -45,6 +45,8 @@ Illustrative food photographs are downloaded from Unsplash:
 - Salad: https://images.unsplash.com/photo-1546069901-ba9599a7e63c
 - Pastries: https://images.unsplash.com/photo-1517433367423-c7e5b0f35086
 - Produce: https://images.unsplash.com/photo-1518843875459-f738682238a6
+
+The kitchen table hero photograph was generated for this redesign.
 
 Unsplash license: https://unsplash.com/license. Images do not depict actual FoodShare partner businesses.
 

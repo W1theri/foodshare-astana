@@ -1,4 +1,4 @@
-import { STORAGE_KEY, money, seedState, nextDate, expires, addOffer, reserve, cancel, collect, impact } from './domain.js';
+import { STORAGE_KEY, money, seedState, nextDate, astanaDate, pickupTime, expires, addOffer, reserve, cancel, collect, impact, updateAvailability } from './domain.js';
 
 const $ = selector => document.querySelector(selector);
 const all = selector => [...document.querySelectorAll(selector)];
@@ -8,9 +8,15 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
 const main = $('#main');
 const modal = $('#modal');
 const categories = ['All food', 'Bakery', 'Meals', 'Produce'];
-const filters = { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100, sort: 'distance' };
+const filters = { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100, sort: 'distance', day: '', saved: false };
+const favoritesKey = 'foodshare-favorites-v1';
 const views = { discover: renderDiscover, pickups: renderPickups, cafe: renderCafe, impact: renderImpact };
 let state = seedState();
+let favorites = new Set();
+let mode = 'connecting';
+let snapshot;
+let apiBusy = false;
+const availabilityDrafts = new Map();
 let viewMode = 'list';
 let mapOffer = 'bakery';
 let renderedView;
@@ -27,7 +33,63 @@ function readState(raw) {
 
 try {
   state = readState(localStorage.getItem(STORAGE_KEY)) ?? state;
+  const saved = JSON.parse(localStorage.getItem(favoritesKey) ?? '[]');
+  if (Array.isArray(saved)) favorites = new Set(saved.filter(id => typeof id === 'string'));
 } catch {}
+
+function acceptShared(next) {
+  if (next.revision < state.revision) return;
+  const packed = JSON.stringify(next);
+  if (snapshot === packed) return;
+  const accessChanged = state.operator !== next.operator || state.signedIn !== next.signedIn;
+  snapshot = packed;
+  state = next;
+  if (accessChanged && currentView() === 'cafe') render();
+  else refreshState();
+}
+
+async function connect(initial = false) {
+  if (apiBusy) return;
+  apiBusy = true;
+  const banner = $('#connection-status');
+  try {
+    const response = await fetch('./api/state', { cache: 'no-store' });
+    if (initial && response.status === 404) {
+      mode = 'local';
+      banner.textContent = 'Browser demo · Fictional cafés and simulated payments';
+      render();
+      return;
+    }
+    if (!response.ok) throw Error('Shared catalogue unavailable');
+    const next = await response.json();
+    if (next?.version !== 1 || !Array.isArray(next.offers) || !Array.isArray(next.orders)) throw Error('Invalid catalogue');
+    mode = 'shared';
+    banner.textContent = 'Live demo · Fictional cafés and simulated payments';
+    acceptShared(next);
+  } catch {
+    banner.textContent = 'Shared catalogue is temporarily unavailable. Retrying…';
+    if (initial) main.innerHTML = '<p class="loading-message" role="status">The shared catalogue is reconnecting…</p>';
+  } finally {
+    apiBusy = false;
+  }
+}
+
+async function perform(action, data, offline) {
+  if (mode === 'local') return offline();
+  if (mode !== 'shared') throw Error('The shared catalogue is unavailable. Try again when the connection returns.');
+  const response = await fetch('./api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...data }),
+  });
+  const { state: next, error, ...result } = await response.json().catch(() => ({ error: 'The shared catalogue is unavailable.' }));
+  if (!response.ok) {
+    void connect();
+    throw Error(error ?? 'This action could not be saved.');
+  }
+  acceptShared(next);
+  return result;
+}
 
 function currentView() {
   const route = location.hash.slice(1);
@@ -53,9 +115,12 @@ function render() {
 }
 
 function refreshState() {
-  if (renderedView === 'cafe' && currentView() === 'cafe') {
+  if (renderedView === 'cafe' && currentView() === 'cafe' && $('#inventory-list')) {
     updateNav();
     renderCafeLists();
+  } else if (renderedView === 'discover' && currentView() === 'discover' && $('#results')) {
+    updateNav();
+    renderResults();
   } else {
     render();
   }
@@ -107,8 +172,8 @@ function pickup(offer) {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
   let day = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  if (date.toDateString() === today.toDateString()) day = 'Today';
-  if (date.toDateString() === tomorrow.toDateString()) day = 'Tomorrow';
+  if (offer.utcOffset ? offer.date === astanaDate() : date.toDateString() === today.toDateString()) day = 'Today';
+  if (offer.utcOffset ? offer.date === astanaDate(1) : date.toDateString() === tomorrow.toDateString()) day = 'Tomorrow';
   return `${day}, ${esc(offer.start)}–${esc(offer.end)}`;
 }
 
@@ -124,11 +189,23 @@ function discount(offer) {
 function visibleOffers() {
   const needle = filters.query.trim().toLowerCase();
   const now = Date.now();
-  return state.offers.filter(o => o.stock > 0 && expires(o) > now
+  const day = !filters.day ? '' : mode === 'shared' ? astanaDate(Number(filters.day) - 1)
+    : filters.day === '2' ? nextDate() : localDate();
+  return state.offers.filter(o => o.stock > 0 && !o.paused && expires(o) > now
+    && (!day || o.date === day) && (!filters.saved || favorites.has(o.id))
     && (filters.category === 'All food' || o.category === filters.category)
     && o.price <= filters.maxPrice && o.distance <= filters.maxDistance
     && `${o.cafe} ${o.title} ${o.category}`.toLowerCase().includes(needle))
-    .sort((a, b) => filters.sort === 'price' ? a.price - b.price : a.distance - b.distance);
+    .sort((a, b) => {
+      if (filters.sort === 'price') return a.price - b.price;
+      if (filters.sort === 'pickup') return pickupTime(a) - pickupTime(b);
+      return a.distance - b.distance;
+    });
+}
+
+function localDate() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function card(offer) {
@@ -147,7 +224,12 @@ function card(offer) {
             <span class="price">${money(offer.price)}</span>
             <div class="price-meta"><s class="old-price"><span class="sr-only">Original price </span>${money(offer.original)}</s>${discount(offer)}</div>
           </div>
-          <button class="round-btn" data-offer="${esc(offer.id)}" aria-label="View ${esc(offer.title)}"><span aria-hidden="true">↗</span></button>
+          <div class="card-actions">
+            <button class="save-btn" type="button" data-save="${esc(offer.id)}" aria-pressed="${favorites.has(offer.id)}" aria-label="Save ${esc(offer.title)}">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20.8 8.7c0 4.4-8.8 9.6-8.8 9.6s-8.8-5.2-8.8-9.6a4.6 4.6 0 0 1 8.8-1.9 4.6 4.6 0 0 1 8.8 1.9Z"/></svg>
+            </button>
+            <button class="round-btn" data-offer="${esc(offer.id)}" aria-label="View ${esc(offer.title)}"><span aria-hidden="true">↗</span></button>
+          </div>
         </div>
       </div>
     </article>`;
@@ -158,37 +240,46 @@ function renderDiscover() {
     <section class="hero">
       <div>
         <div class="eyebrow">Surplus food in Astana</div>
-        <h1>Good food.<br><em>Better saved.</em></h1>
-        <p>Reserve surplus food from local cafés and bakeries at a lower price, then pick it up during their collection window.</p>
-        <a class="btn" href="#offers">Explore available bags <span aria-hidden="true">↓</span></a>
+        <h1>Good food<br><em>finds a home.</em></h1>
+        <p>Pick up a bag of surplus food from a neighbourhood bakery or café in Astana. Enjoy it at a smaller price.</p>
+        <a class="btn" href="#offers">Find a bag <span aria-hidden="true">↓</span></a>
       </div>
-      <div class="hero-image"><img src="assets/bread.jpg" alt="Rustic loaves of bread"></div>
+      <div class="hero-image"><img src="assets/kitchen-table.jpg" alt="Croissants and a fresh loaf beside a paper bag on a kitchen table" width="1536" height="1024" fetchpriority="high"></div>
     </section>
     <section id="offers" aria-labelledby="offers-title">
       <div class="section-top">
         <h2 id="offers-title" tabindex="-1">Find your next bag</h2>
         <p id="result-count" role="status"></p>
+        <button class="chip" id="saved-toggle" type="button"></button>
       </div>
-      <div class="filters">
+      <div class="browse-tools">
+        <div class="search-bar">
+          <label class="search"><span class="sr-only">Search offers</span><input type="search" id="search" placeholder="Search for a café, pastry or meal"></label>
+          <button class="btn secondary" id="view-toggle"></button>
+        </div>
         <div class="categories" role="group" aria-label="Food category">
           ${categories.map(category => `<button class="chip" data-category="${category}">${category}</button>`).join('')}
         </div>
-        <label class="search"><span class="sr-only">Search offers</span><input type="search" id="search" placeholder="Search cafés or food"></label>
-        <select id="price-filter" aria-label="Maximum price">
+      </div>
+      <details class="filter-panel">
+        <summary>Pickup, price and distance <span id="active-filters"></span></summary>
+        <div class="filters">
+          <label>Pickup day<select id="day-filter"><option value="">Any day</option><option value="1">Today</option><option value="2">Tomorrow</option></select></label>
+          <label>Max. price<select id="price-filter">
           <option value="1000000">Any price</option><option value="1000">Up to ₸1,000</option>
           <option value="1500">Up to ₸1,500</option><option value="2000">Up to ₸2,000</option>
-        </select>
-        <select id="distance-filter" aria-label="Maximum distance">
+          </select></label>
+          <label>Distance<select id="distance-filter">
           <option value="100">Any distance</option><option value="1">Within 1 km</option>
           <option value="2">Within 2 km</option><option value="3">Within 3 km</option>
-        </select>
-        <select id="sort" aria-label="Sort offers">
-          <option value="distance">Nearest first</option><option value="price">Lowest price</option>
-        </select>
-        <button class="btn secondary" id="view-toggle"></button>
-      </div>
+          </select></label>
+          <label>Sort by<select id="sort">
+            <option value="distance">Nearest first</option><option value="price">Lowest price</option><option value="pickup">Soonest pickup</option>
+          </select></label>
+        </div>
+      </details>
       <div id="results"></div>
-      <p class="micro offers-note">Photos are illustrative. Distances are estimates from central Astana. Pickup times use your device’s local time.</p>
+      <p class="micro offers-note">Photos are illustrative. Distances are estimates from central Astana.${mode === 'shared' ? ' Pickup times are in Astana time.' : ''}</p>
     </section>
     <section class="how-it-works" aria-labelledby="steps-title">
       <h2 id="steps-title">How pickup works</h2>
@@ -209,7 +300,12 @@ function renderDiscover() {
   $('#search').oninput = event => { filters.query = event.target.value; renderResults(); };
   $('#price-filter').onchange = event => { filters.maxPrice = Number(event.target.value); renderResults(); };
   $('#distance-filter').onchange = event => { filters.maxDistance = Number(event.target.value); renderResults(); };
+  $('#day-filter').onchange = event => { filters.day = event.target.value; renderResults(); };
   $('#sort').onchange = event => { filters.sort = event.target.value; renderResults(); };
+  $('#saved-toggle').onclick = () => {
+    filters.saved = !filters.saved;
+    renderResults();
+  };
   $('#view-toggle').onclick = () => {
     viewMode = viewMode === 'list' ? 'map' : 'list';
     renderResults();
@@ -222,6 +318,7 @@ function updateFilterControls() {
   $('#price-filter').value = String(filters.maxPrice);
   $('#distance-filter').value = String(filters.maxDistance);
   $('#sort').value = filters.sort;
+  $('#day-filter').value = filters.day;
   for (const button of all('[data-category]')) {
     const selected = button.dataset.category === filters.category;
     button.classList.toggle('selected', selected);
@@ -235,16 +332,22 @@ function renderResults() {
   const count = `${offers.length} ${offers.length === 1 ? 'offer' : 'offers'} available`;
   if ($('#result-count').textContent !== count) $('#result-count').textContent = count;
   $('#view-toggle').textContent = viewMode === 'list' ? 'Map view' : 'List view';
+  const saved = $('#saved-toggle');
+  saved.textContent = favorites.size ? `Saved (${favorites.size})` : 'Saved';
+  saved.setAttribute('aria-pressed', filters.saved);
+  saved.classList.toggle('selected', filters.saved);
+  const countFilters = Number(Boolean(filters.day)) + Number(filters.maxPrice !== 1000000) + Number(filters.maxDistance !== 100);
+  $('#active-filters').textContent = countFilters ? `(${countFilters})` : '';
 
   if (offers.length === 0) {
     target.innerHTML = `
       <div class="empty">
-        <h3>No bags match your filters</h3>
-        <p>Try a different category or widen your price and distance filters.</p>
-        <button class="btn secondary" id="clear-filters">Clear filters</button>
+        <h3>${filters.saved ? 'No saved bags available' : 'No bags match your filters'}</h3>
+        <p>${filters.saved ? 'Save a bag to find it here while it’s available.' : 'Try another day, category or distance.'}</p>
+        <button class="btn secondary" id="clear-filters">${filters.saved ? 'Browse all bags' : 'Clear filters'}</button>
       </div>`;
     $('#clear-filters').onclick = () => {
-      Object.assign(filters, { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100 });
+      Object.assign(filters, { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100, day: '', saved: false });
       updateFilterControls();
       renderResults();
       $('#search').focus();
@@ -259,6 +362,20 @@ function renderResults() {
 
   target.innerHTML = `<div class="cards">${offers.map(card).join('')}</div>`;
   for (const button of all('[data-offer]')) button.onclick = () => showOffer(button.dataset.offer);
+  for (const button of all('[data-save]')) button.onclick = () => {
+    const id = button.dataset.save;
+    const next = new Set(favorites);
+    if (!next.delete(id)) next.add(id);
+    try {
+      localStorage.setItem(favoritesKey, JSON.stringify([...next]));
+      favorites = next;
+      renderResults();
+      (all('[data-save]').find(item => item.dataset.save === id) ?? saved).focus({ preventScroll: true });
+      toast(next.has(id) ? 'Bag saved.' : 'Bag removed from saved.');
+    } catch {
+      toast('Could not save favorites in this browser.');
+    }
+  };
 }
 
 function renderMap(target, offers) {
@@ -330,14 +447,26 @@ function showOffer(id) {
     $('#total').textContent = money(offer.price * Math.max(0, Number(event.target.value) || 0));
     $('#reserve-error').textContent = '';
   };
-  $('#reserve-form').onsubmit = event => {
+  $('#reserve-form').onsubmit = async event => {
     event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('[type="submit"]');
+    const errorMessage = $('#reserve-error');
+    const qty = Number($('#quantity').value);
+    button.disabled = true;
+    errorMessage.textContent = '';
     try {
-      const token = 'FS-' + crypto.randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase();
-      commit(reserve(state, id, Number($('#quantity').value), token));
-      showTicket(token, true);
+      const result = await perform('reserve', { id, qty, allergensConfirmed: $('#allergen-confirm').checked }, () => {
+        const token = 'FS-' + crypto.randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase();
+        commit(reserve(state, id, qty, token));
+        return { id: token };
+      });
+      if (form.isConnected && modal.open) showTicket(result.id, true);
+      else toast('Reservation confirmed. Open My pickups for your ticket.');
     } catch (error) {
-      $('#reserve-error').textContent = error.message;
+      errorMessage.textContent = error.message;
+    } finally {
+      button.disabled = false;
     }
   };
 }
@@ -437,24 +566,38 @@ function confirmCancel(id) {
     <button class="btn danger dialog-confirm" id="confirm-cancel">Cancel demo reservation</button>
     <p class="error" id="cancel-error" role="alert"></p>
   </div>`);
-  $('#confirm-cancel').onclick = () => {
+  $('#confirm-cancel').onclick = async event => {
+    const button = event.currentTarget;
+    const feedback = $('#cancel-error');
+    button.disabled = true;
     try {
-      commit(cancel(state, id));
-      modal.close();
+      await perform('cancel', { id }, () => commit(cancel(state, id)));
+      if (button.isConnected && modal.open) modal.close();
       toast('Reservation cancelled. The bags are available again.');
     } catch (error) {
-      $('#cancel-error').textContent = error.message;
+      feedback.textContent = error.message;
+    } finally {
+      button.disabled = false;
     }
   };
 }
 
 function renderCafe() {
-  const today = new Date();
-  const dateMin = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const dateMin = mode === 'shared' ? astanaDate() : localDate();
+  if (mode === 'shared' && !state.operator) {
+    main.innerHTML = `
+      <div class="page-heading"><h1>Café workspace</h1><p>Publish bags, manage stock and check pickup codes for the shared catalogue.</p></div>
+      <section class="empty">
+        <h2>${state.signedIn ? 'Café access is restricted' : 'Sign in to manage offers'}</h2>
+        <p>${state.signedIn ? 'This workspace is available to the FoodShare site owner.' : 'Use the site owner’s ChatGPT account to access the café workspace.'}</p>
+        <a class="btn" href="/signin-with-chatgpt?return_to=%2F%23cafe" target="_top">Sign in with ChatGPT</a>
+      </section>`;
+    return;
+  }
   main.innerHTML = `
     <div class="page-heading">
       <h1>Café workspace</h1>
-      <p>Confirm a pickup, publish a surplus bag or check remaining stock. This is a shared demo workspace.</p>
+      <p>Confirm a pickup, publish a surplus bag or change what’s available. Pickup times are in ${mode === 'shared' ? 'Astana' : 'your device’s local'} time.</p>
     </div>
     <div class="workspace">
       <section class="panel verify-panel">
@@ -492,7 +635,7 @@ function renderCafe() {
           <fieldset>
             <legend>Pickup details</legend>
             <div class="form-grid">
-              <label class="full">Pickup date<input name="date" type="date" min="${dateMin}" value="${nextDate()}" required></label>
+              <label class="full">Pickup date<input name="date" type="date" min="${dateMin}" value="${mode === 'shared' ? astanaDate(1) : nextDate()}" required></label>
               <label>Pickup starts<input name="start" type="time" value="18:00" required></label>
               <label>Pickup ends<input name="end" type="time" value="21:00" required></label>
               <label class="full">Pickup address<input name="address" placeholder="Demo pickup address" maxlength="200" required></label>
@@ -505,7 +648,7 @@ function renderCafe() {
                 <option value="assets/bread.jpg">Artisan bread</option><option value="assets/pastry.jpg">Pastries</option>
                 <option value="assets/salad.jpg">Fresh meal</option><option value="assets/produce.jpg">Vegetables</option>
               </select></label>
-              <label class="full">Or upload a photo <span class="micro">JPG, PNG or WebP, up to 1 MB. Stored in this browser.</span>
+              <label class="full">Or upload a photo <span class="micro">JPG, PNG or WebP, up to 1 MB.</span>
                 <input name="upload" type="file" accept="image/jpeg,image/png,image/webp">
               </label>
             </div>
@@ -525,8 +668,9 @@ function renderCafe() {
 }
 
 function renderCafeLists() {
+  if (!$('#inventory-list')) return;
   const now = Date.now();
-  const pending = state.orders.filter(o => o.status === 'reserved' && expires(o) > now);
+  const pending = (state.queue ?? state.orders).filter(o => o.status === 'reserved' && expires(o) > now);
   $('#pending-list').innerHTML = `
     <h2>Awaiting collection</h2>
     <p>${pending.length ? `${pending.length} active ${pending.length === 1 ? 'reservation' : 'reservations'}` : 'No active reservations yet.'}</p>
@@ -535,11 +679,49 @@ function renderCafeLists() {
       <span class="micro">${pickup(o)}</span>
     </div>`).join('')}</div>`;
   $('#inventory-list').innerHTML = `
-    <h2>Demo inventory</h2>
-    <div class="mini-list">${state.offers.map(o => `<div class="mini-row">
-      <div>${esc(o.title)}<br><span class="micro">${esc(o.cafe)}${expires(o) <= now ? ' · Expired' : ''}</span></div>
-      <strong>${bags(o.stock)}</strong>
-    </div>`).join('')}</div>`;
+    <h2>Manage offers</h2>
+    <p>Pause a listing to hide it from Discover. Existing pickup tickets remain valid.</p>
+    <div class="mini-list">${state.offers.map(offer => {
+      const ended = expires(offer) <= now;
+      const draft = availabilityDrafts.get(offer.id) ?? { stock: offer.stock, paused: Boolean(offer.paused) };
+      return `<div class="stock-listing">
+        <div class="mini-row">
+          <div><strong>${esc(offer.title)}</strong><br><span class="micro">${esc(offer.cafe)}${ended ? ' · Ended' : offer.paused ? ' · Paused' : ''}</span></div>
+          <strong>${bags(offer.stock)}</strong>
+        </div>
+        ${ended ? '' : `<form class="availability-form" data-availability="${esc(offer.id)}">
+          <label>Available<input name="stock" type="number" min="0" max="100" step="1" value="${esc(draft.stock)}" required></label>
+          <label class="pause-control"><input name="paused" type="checkbox" ${draft.paused ? 'checked' : ''}> Pause listing</label>
+          <button class="btn secondary" type="submit">Update</button>
+          <p class="error" role="alert"></p>
+        </form>`}
+      </div>`;
+    }).join('')}</div>`;
+  for (const form of all('[data-availability]')) {
+    const id = form.dataset.availability;
+    const stock = form.elements.namedItem('stock');
+    const paused = form.elements.namedItem('paused');
+    form.oninput = () => availabilityDrafts.set(id, { stock: stock.value, paused: paused.checked });
+    form.onsubmit = async event => {
+      event.preventDefault();
+      const feedback = form.querySelector('.error');
+      const button = form.querySelector('button');
+      const changes = { id, stock: Number(stock.value), paused: paused.checked };
+      button.disabled = true;
+      feedback.textContent = '';
+      try {
+        await perform('availability', changes, () => commit(updateAvailability(state, id, changes.stock, changes.paused)));
+        availabilityDrafts.delete(id);
+        toast('Offer availability updated.');
+      } catch (error) {
+        const activeForm = all('[data-availability]').find(item => item.dataset.availability === id);
+        if (activeForm) activeForm.querySelector('.error').textContent = error.message;
+        else toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    };
+  }
 }
 
 async function publishOffer(event) {
@@ -585,7 +767,7 @@ async function publishOffer(event) {
       lng: 71.4304,
       image,
     };
-    commit(addOffer(state, offer));
+    await perform('publish', { offer }, () => commit(addOffer(state, offer)));
     form.reset();
     toast('Demo offer published in Discover.');
   } catch (error) {
@@ -595,25 +777,32 @@ async function publishOffer(event) {
   }
 }
 
-function verifyPickup(event) {
+async function verifyPickup(event) {
   event.preventDefault();
   const code = $('#verify-code');
   const feedback = $('#verification-success');
   const errorMessage = $('#verify-error');
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
   errorMessage.textContent = '';
   feedback.replaceChildren();
   try {
-    const order = state.orders.find(o => o.token === code.value.trim().toUpperCase());
-    commit(collect(state, code.value));
+    const order = await perform('verify', { code: code.value }, () => {
+      const match = state.orders.find(o => o.token === code.value.trim().toUpperCase());
+      commit(collect(state, code.value));
+      return match;
+    });
     code.value = '';
     feedback.innerHTML = `<p class="saved-notice"><strong>Collection confirmed</strong><br>${esc(order.cafe)} · ${bags(order.qty)}. Impact updated.</p>`;
   } catch (error) {
     errorMessage.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 
 function renderImpact() {
-  const totals = impact(state);
+  const totals = state.totals ?? impact(state);
   const metrics = [
     [totals.bags, 'Demo bags collected'],
     [`${totals.kg.toFixed(1)} kg`, 'Estimated food collected'],
@@ -623,7 +812,7 @@ function renderImpact() {
   main.innerHTML = `
     <div class="page-heading">
       <h1>Our impact</h1>
-      <p>Only pickups confirmed in this browser count toward these classroom demo totals.</p>
+      <p>Only confirmed pickups count toward these classroom demo totals.</p>
     </div>
     <section class="metrics" aria-label="Demo impact totals">
       ${metrics.map(([value, label]) => `<div class="panel metric"><strong>${value}</strong><span>${label}</span></div>`).join('')}
@@ -643,14 +832,14 @@ $('#about-button').onclick = () => {
     <h2 id="modal-title" class="modal-title">About FoodShare</h2>
     <p>A Project Management endterm prototype by Ruslan Bolatbekuly, Ayana Markhabat, Abilmansur Kassymov and Balgyn Yermakhanbet. Group SE-2404. Instructor Alimova Balaussa.</p>
     <h3>Demo data</h3>
-    <p>Cafés are fictional. Orders and payments are simulated. Your offers and reservations are saved in this browser. The café workspace is shared, and the QR encodes a demo pickup code for manual verification.</p>
+    <p>Cafés are fictional and orders and payments are simulated. ${mode === 'shared' ? 'Offers and collection totals are shared. Guest tickets and favorites are available in the browser where you saved them.' : 'Your offers and orders are saved in this browser.'} The QR encodes a demo pickup code.</p>
     <h3>Credits</h3>
     <p>Illustrative photos from <a href="https://unsplash.com" target="_blank" rel="noopener">Unsplash</a>. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. QR generator by Kazuhiko Arase, MIT license.</p>
-    <h3>Restart the demonstration</h3>
+    ${mode === 'local' ? `<h3>Restart the demonstration</h3>
     <p>Reset removes offers and reservations saved in this browser and restores the four example bags.</p>
-    <button class="btn danger" id="reset-demo">Reset demo data</button>
+    <button class="btn danger" id="reset-demo">Reset demo data</button>` : ''}
   </div>`);
-  $('#reset-demo').onclick = confirmReset;
+  $('#reset-demo')?.addEventListener('click', confirmReset);
 };
 
 function confirmReset() {
@@ -691,15 +880,22 @@ window.addEventListener('hashchange', () => {
 });
 
 window.addEventListener('storage', event => {
-  if (event.key !== STORAGE_KEY) return;
+  if (event.key !== STORAGE_KEY || mode !== 'local') return;
   const updated = readState(event.newValue);
   if (!updated) return;
   state = updated;
   refreshState();
 });
 
-render();
-if (location.hash === '#offers') scrollToOffers();
+main.innerHTML = '<p class="loading-message" role="status">Opening FoodShare…</p>';
+await connect(true);
+if (location.hash === '#offers' && $('#offers')) scrollToOffers();
 setInterval(() => {
-  if (renderedView === 'discover' && !modal.open && !$('#results').contains(document.activeElement)) renderResults();
+  if (mode !== 'local' && !document.hidden) void connect();
+}, 8000);
+document.addEventListener('visibilitychange', () => {
+  if (mode === 'shared' && !document.hidden) void connect();
+});
+setInterval(() => {
+  if (renderedView === 'discover' && $('#results') && !modal.open && !$('#results').contains(document.activeElement)) renderResults();
 }, 60000);
