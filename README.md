@@ -33,7 +33,11 @@ Run `npm test` with Node.js 24 or later. The tests cover domain arithmetic, canc
 
 `npm run build` bundles the pages and server API as a single Worker for Sites. D1 stores the shared catalogue. The hosted Café workspace uses ChatGPT sign-in. The server checks the verified email against the server-only `CAFE_OWNER_EMAIL` value for the site owner. The owner can grant or revoke access to a named café in **Café team access**. Staff sign in using the approved email and can manage that café only.
 
-Visitors can reserve demo offers as guests. Live offers require buyer sign-in so the ticket follows their account across devices. Publish a live offer only for a participating café that has confirmed the food, price, pickup window and address. The buyer pays directly at pickup. Demo listings stay marked as such and their statistics remain separate. The hosted database starts with demo offers. Earlier browser-only orders are separate.
+Visitors can reserve sample offers as guests. Live offers require buyer sign-in so the ticket follows their account across devices. Publish a live offer only for a participating café that has confirmed the food, price, pickup window and address. The buyer pays directly at pickup. Sample listings and their statistics are marked separately. Earlier browser-only orders are separate.
+
+## GitHub Pages preview
+
+Publish the tracked `dist/` tree to the root of the `gh-pages` branch. GitHub Pages serves a static preview with fictional offers and browser-local reservations. Shared stock, café accounts and live listings use the Sites deployment.
 
 ## Boundaries
 

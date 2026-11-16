@@ -238,7 +238,7 @@ async function mutate(db, payload, user) {
     }
     if (change.next === current) return { state: view(current, user, revision), ...change.result };
     const packed = JSON.stringify(change.next);
-    if (packed.length > 700000) throw new ApiError(507, 'This classroom demo has reached its storage limit.');
+    if (packed.length > 700000) throw new ApiError(507, 'FoodShare has reached its storage limit.');
     const update = db.prepare('UPDATE app_state SET document = ?, revision = revision + 1 WHERE id = 1 AND revision = ?').bind(packed, revision);
     let result;
     if (photo) {

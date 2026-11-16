@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="FoodShare student prototype. Discover surplus food, make a demo reservation and verify pickup. No real payments or real businesses.">
+  <meta name="description" content="Discover surplus food from bakeries and cafés in Astana, reserve a bag and get a pickup ticket.">
   <meta name="theme-color" content="#fbf4e8">
   <title>FoodShare | Surplus food in Astana</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
@@ -13,7 +13,7 @@
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to content</a>
-  <div class="demo-bar" id="connection-status" role="status">Student demo · Fictional cafés · Simulated orders and payments</div>
+  <div class="status-bar" id="connection-status" role="status">Astana · Surplus food from local cafés</div>
   <header class="site-header">
     <a class="brand" href="#discover" aria-label="FoodShare home"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M26 5C12 4 4 12 7 23c11 4 20-4 19-18Z" fill="currentColor"/><path d="m8 25 12-12" stroke="#f7f6ef" stroke-width="2" fill="none"/></svg></span>foodshare<span>.</span></a>
     <nav class="main-nav" aria-label="Main navigation">
@@ -27,6 +27,13 @@
   </header>
   <main id="main" tabindex="-1"></main>
   <footer><div class="footer-content"><a class="brand" href="#discover">foodshare.</a></div></footer>
+  <dialog class="preview-notice" id="preview-notice" aria-labelledby="preview-title" aria-describedby="preview-copy">
+    <div class="modal-copy">
+      <h2 class="modal-title" id="preview-title">FoodShare is a demo</h2>
+      <p class="modal-body" id="preview-copy">Sample offers are fictional. Their reservations and payments are simulated. Pay for an offer marked “Pay at pickup” when you collect it at the café.</p>
+      <form class="preview-actions" method="dialog"><button class="btn" type="submit">Continue to FoodShare</button><a id="shared-site-link" class="text-button" href="https://foodshare-astana.inspiringtune5.chatgpt.site/" hidden>Open shared catalogue</a></form>
+    </div>
+  </dialog>
   <dialog id="modal" aria-labelledby="modal-title"><div class="modal-tools"><button class="modal-close" type="button" aria-label="Close dialog">×</button></div><div id="modal-content"></div></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
 </body>

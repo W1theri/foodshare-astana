@@ -30,10 +30,14 @@ export function pickupCalendar(order, now = Date.now()) {
     'BEGIN:VEVENT', 'UID:' + crypto.randomUUID() + '@foodshare', 'DTSTAMP:' + calendarDate(now),
     'DTSTART:' + calendarDate(pickupTime(order)), 'DTEND:' + calendarDate(expires(order)),
     'SUMMARY:' + calendarText('FoodShare pickup at ' + order.cafe),
-    'LOCATION:' + calendarText(order.address),
+    'LOCATION:' + calendarText(pickupAddress(order)),
     'DESCRIPTION:' + calendarText(order.title + '\nOpen My pickups in FoodShare for your ticket.'),
     'END:VEVENT', 'END:VCALENDAR',
   ].map(fold).join('\r\n') + '\r\n';
+}
+
+export function pickupAddress(offer) {
+  return offer.kind === 'pilot' ? offer.address : offer.address.replace(/^Demo location near /i, 'Example location near ');
 }
 
 export function pickupMap(offer) {
@@ -41,7 +45,9 @@ export function pickupMap(offer) {
   const longitude = offer.lng;
   const url = new URL('https://www.openstreetmap.org/search');
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    url.searchParams.set('query', offer.address.replace(/^Demo location near /i, '') + ', Astana, Kazakhstan');
+    const address = pickupAddress(offer);
+    const street = offer.kind === 'pilot' ? address : address.replace(/^Example location near /i, '');
+    url.searchParams.set('query', street + ', Astana, Kazakhstan');
     return url.href;
   }
   url.pathname = '/';

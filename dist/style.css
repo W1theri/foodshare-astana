@@ -50,7 +50,7 @@ main:focus, [tabindex="-1"]:focus { outline: none; }
   margin-inline: auto;
   padding-inline: var(--gutter);
 }
-.demo-bar {
+.status-bar {
   background: #f3e4cf; color: #654530; padding: .45rem 1rem;
   text-align: center; font-size: .75rem; line-height: 1.4;
 }
@@ -353,6 +353,10 @@ body:has(dialog[open]) { overflow: hidden; }
 .modal-close:hover { background: var(--soft); }
 .modal-copy { padding: clamp(1rem, 4vw, 1.75rem); }
 .modal-copy:not(.offer-copy) > .modal-title:first-child { padding-inline-end: 2rem; }
+.preview-notice { max-width: 30rem; }
+.preview-notice .modal-copy { padding: clamp(1.2rem, 5vw, 2.2rem); }
+.preview-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; margin-top: 1.25rem; }
+.preview-actions [hidden] { display: none; }
 .modal-photo { width: 100%; height: clamp(8rem, 24vh, 13rem); object-fit: cover; }
 .modal-title { margin-bottom: .6rem; font-size: clamp(1.55rem, 4vw, 2.3rem); line-height: 1.05; letter-spacing: -.045em; }
 .modal-facts {
