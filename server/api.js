@@ -1,7 +1,7 @@
-import { addOffer, astanaDate, cancel, collect, expires, impact, pickupTime, reserve, seedState, updateAvailability } from '../dist/domain.js';
+import { addOffer, astanaDate, cancel, collect, expires, impact, includeExtraSamples, pickupTime, reserve, seedState, updateAvailability } from '../dist/domain.js';
 
 const sessionName = 'foodshare_session';
-const seedPhotos = new Set(['assets/bread.jpg', 'assets/pastry.jpg', 'assets/salad.jpg', 'assets/produce.jpg']);
+const seedPhotos = new Set(['assets/bread.jpg', 'assets/pastry.jpg', 'assets/salad.jpg', 'assets/produce.jpg', 'assets/apple-loaf.jpg', 'assets/lentil-bowl.jpg']);
 const maxUpload = 1024 * 1024;
 const maxBody = 1450000;
 
@@ -42,13 +42,25 @@ function json(body, status = 200, cookie) {
 
 async function loadRecord(db) {
   const select = () => db.prepare('SELECT revision, document FROM app_state WHERE id = 1').first();
-  let row = await select();
-  if (row) return row;
-  const state = seedState();
   const date = astanaDate(1);
-  state.offers = state.offers.map(o => ({ ...o, date, utcOffset: '+05:00' }));
-  await db.prepare('INSERT OR IGNORE INTO app_state VALUES (1, 0, ?)').bind(JSON.stringify(state)).run();
-  return select();
+  const row = await select();
+  if (!row) {
+    const state = seedState();
+    state.offers = state.offers.map(offer => ({ ...offer, date, utcOffset: '+05:00' }));
+    await db.prepare('INSERT OR IGNORE INTO app_state VALUES (1, 0, ?)').bind(JSON.stringify(state)).run();
+  }
+  let current = row ?? await select();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const state = JSON.parse(current.document);
+    const updated = includeExtraSamples(state, date, '+05:00');
+    if (updated === state) return current;
+    const document = JSON.stringify(updated);
+    const result = await db.prepare('UPDATE app_state SET document = ?, revision = revision + 1 WHERE id = 1 AND revision = ?')
+      .bind(document, current.revision).run();
+    if (result.meta.changes === 1) return { revision: current.revision + 1, document };
+    current = await select();
+  }
+  throw new ApiError(503, 'The catalogue is updating. Try again shortly.');
 }
 
 function publicOrder({ owner, requestId, ...order }) {

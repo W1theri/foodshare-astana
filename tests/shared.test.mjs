@@ -1,11 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { astanaDate } from '../dist/domain.js';
+import { astanaDate, reserve, seedState } from '../dist/domain.js';
 import { handleApi } from '../server/api.js';
 import { openCatalogue } from '../server/sqlite.js';
 
 const origin = 'https://foodshare.example';
+
+test('existing catalogues gain the two sample products once and keep stored reservations and stock', async () => {
+  const db = await openCatalogue(':memory:');
+  try {
+    const seeded = seedState();
+    const legacy = reserve({ ...seeded, offers: seeded.offers.slice(0, 4) }, 'bakery', 2, 'FS-11111111');
+    await db.prepare('INSERT INTO app_state VALUES (1, 7, ?)').bind(JSON.stringify(legacy)).run();
+    const request = () => handleApi(new Request(origin + '/api/state'), { DB: db });
+    const first = await (await request()).json();
+    assert.equal(first.revision, 8);
+    assert.deepEqual(first.offers.slice(-2).map(offer => offer.id), ['apple-loaf', 'lentil-bowl']);
+    assert.deepEqual(first.offers.slice(0, 4), legacy.offers);
+    const again = await (await request()).json();
+    assert.equal(again.revision, first.revision);
+    const row = await db.prepare('SELECT document FROM app_state WHERE id = 1').first();
+    assert.deepEqual(JSON.parse(row.document).orders, JSON.parse(JSON.stringify(legacy.orders)));
+  } finally {
+    db.close();
+  }
+});
 
 test('two buyer sessions share stock and keep their tickets private; only the café can verify', async () => {
   const db = await openCatalogue(':memory:');

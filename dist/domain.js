@@ -3,12 +3,32 @@ export const money = n => '₸' + Number(n).toLocaleString('en-US');
 export function nextDate() { const d = new Date(); d.setDate(d.getDate()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 export function seedState() {
  const common = {date:nextDate(), start:'18:00', end:'21:00', lat:51.1282, lng:71.4304};
- return {version:1, orders:[], offers:[
+ return includeExtraSamples({version:1, orders:[], offers:[
   {...common,id:'bakery',cafe:'Qala Bakery',title:'The baker’s surprise bag',category:'Bakery',price:1200,original:3600,stock:5,kg:0.7,distance:0.8,image:'assets/bread.jpg',address:'Demo location near Nurzhol Boulevard',allergens:'Wheat, milk, eggs. May contain nuts.',description:'A generous mix of bread and baked treats from the day. The exact selection is a surprise.'},
   {...common,id:'green',cafe:'Green Table',title:'Something fresh for dinner',category:'Meals',price:1600,original:4000,stock:4,kg:0.6,distance:1.2,image:'assets/salad.jpg',address:'Demo location near Dostyq Street',allergens:'Sesame, soy. Ask the café about the exact ingredients.',description:'A fresh seasonal meal with vegetables and grains. Contents vary with the day’s surplus.'},
   {...common,id:'croissant',cafe:'Little Crumb',title:'An afternoon pastry box',category:'Bakery',price:900,original:2700,stock:3,kg:0.4,distance:1.9,image:'assets/pastry.jpg',address:'Demo location near Qabanbay Batyr Avenue',allergens:'Wheat, butter, eggs. May contain nuts.',description:'A small box of pastries for a slow afternoon. An assorted selection chosen by the café.'},
   {...common,id:'garden',cafe:'The Corner Market',title:'The seasonal vegetable bag',category:'Produce',price:700,original:2100,stock:6,kg:1.2,distance:2.4,image:'assets/produce.jpg',address:'Demo location near Mangilik El Avenue',allergens:'Produce selection varies. Cross-contact is possible.',description:'Good vegetables with a little character. A changing selection ready for your next home-cooked meal.'}
- ]};
+ ]}, common.date);
+}
+
+export function includeExtraSamples(state, date = nextDate(), utcOffset) {
+ const common = { date, utcOffset, start: '18:00', end: '21:00', lat: 51.1282, lng: 71.4304 };
+ const samples = [
+  {
+   ...common, id: 'apple-loaf', cafe: 'Little Crumb', title: 'Apple cinnamon loaf', category: 'Bakery',
+   price: 850, original: 2200, stock: 4, kg: 0.35, distance: 1.9, image: 'assets/apple-loaf.jpg',
+   address: 'Example location near Qabanbay Batyr Avenue', allergens: 'Wheat, eggs, milk. May contain nuts.',
+   description: 'Thick slices of cinnamon loaf with pieces of apple. A lightly sweet afternoon treat.',
+  },
+  {
+   ...common, id: 'lentil-bowl', cafe: 'Green Table', title: 'Roasted pepper & lentil bowl', category: 'Meals',
+   price: 1100, original: 2700, stock: 5, kg: 0.5, distance: 1.2, image: 'assets/lentil-bowl.jpg',
+   address: 'Example location near Dostyq Street', allergens: 'May contain mustard and celery.',
+   description: 'Green lentils, roasted sweet peppers, parsley and lemon dressing in a warm bowl.',
+  },
+ ];
+ const missing = samples.filter(sample => !state.offers.some(offer => offer.id === sample.id));
+ return missing.length ? { ...state, offers: [...state.offers, ...missing] } : state;
 }
 export function astanaDate(offset = 0) {
  return new Intl.DateTimeFormat('sv-SE', {
