@@ -8,6 +8,12 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
 })[char]);
 const main = $('#main');
 const modal = $('#modal');
+const catalogPhotos = new Set(['assets/bread.jpg', 'assets/pastry.jpg', 'assets/salad.jpg', 'assets/produce.jpg']);
+const pickupSteps = [
+  ['step-browse.jpg', 'Choose a bag', 'Check what’s inside and read the allergen information.'],
+  ['step-reserve.jpg', 'Get your ticket', 'Reserve your bag to receive a QR ticket and pickup code.'],
+  ['step-collect.jpg', 'Pick it up', 'Show your ticket at the café during your pickup window.'],
+];
 const header = $('.site-header');
 const nav = $('.main-nav');
 let pointedLink;
@@ -239,6 +245,10 @@ function distanceLabel(offer) {
   return Number.isFinite(offer.distance) ? `~${offer.distance.toFixed(1)} km` : 'Astana';
 }
 
+function photoUrl(photo) {
+  return catalogPhotos.has(photo) ? photo + '?v=20261116' : photo;
+}
+
 function visibleOffers() {
   const needle = filters.query.trim().toLowerCase();
   const now = Date.now();
@@ -266,7 +276,7 @@ function card(offer) {
   return `
     <article class="food-card">
       <div class="card-image">
-        <img src="${esc(offer.image)}" alt="" loading="lazy">
+        <img src="${esc(photoUrl(offer.image))}" alt="" loading="lazy">
         <span class="stock">${bags(offer.stock)} left</span>
       </div>
       <div class="card-content">
@@ -339,10 +349,15 @@ function renderDiscover() {
     </section>
     <section class="how-it-works" aria-labelledby="steps-title">
       <h2 id="steps-title">How pickup works</h2>
-      <ol>
-        <li>Choose a bag and check its ingredients and allergens.</li>
-        <li>Reserve it to get a QR ticket and pickup code.</li>
-        <li>Show your ticket at the café during the pickup window.</li>
+      <ol class="pickup-steps" role="list">
+        ${pickupSteps.map(([image, title, detail], index) => `
+          <li>
+            <div class="step-art">
+              <img src="assets/${image}" alt="" width="780" height="520" loading="lazy" decoding="async">
+              <span class="step-number" aria-hidden="true">${index + 1}</span>
+            </div>
+            <div class="step-copy"><h3>${title}</h3><p>${detail}</p></div>
+          </li>`).join('')}
       </ol>
     </section>`;
   updateFilterControls();
@@ -484,7 +499,7 @@ function showOffer(id) {
   const live = offer.kind === 'pilot';
   const signIn = live && !state.signedIn;
   openModal(`
-    <img class="modal-photo" src="${esc(offer.image)}" alt="Illustrative food photograph">
+    <img class="modal-photo" src="${esc(photoUrl(offer.image))}" alt="Illustrative food photograph">
     <div class="modal-copy offer-copy">
       <div class="eyebrow">${esc(offer.cafe)}</div>
       <h2 id="modal-title" class="modal-title">${esc(offer.title)}</h2>
@@ -644,7 +659,7 @@ function renderPickups() {
       const status = order.status === 'reserved' && expires(order) <= now ? 'expired' : order.status;
       const [name, note] = statusInfo[status] ?? ['Unknown', ''];
       return `<article class="order-row">
-        <img src="${esc(order.image)}" alt="">
+        <img src="${esc(photoUrl(order.image))}" alt="">
         <div>
           <span class="status ${esc(status)}">${name}</span>
           <h2>${esc(order.title)}</h2>
@@ -707,6 +722,7 @@ function renderCafe() {
     <div class="page-heading">
       <h1>Café workspace</h1>
       <p>Confirm a pickup, publish a surplus bag or change what’s available. Pickup times are in ${mode === 'shared' ? 'Astana' : 'your device’s local'} time.</p>
+      ${mode === 'local' ? '<button class="text-button" type="button" id="reset-demo">Reset browser demo</button>' : ''}
     </div>
     <div class="workspace">
       <section class="panel verify-panel">
@@ -785,6 +801,7 @@ function renderCafe() {
       </div>
     </div>`;
   renderCafeLists();
+  $('#reset-demo')?.addEventListener('click', confirmReset);
   $('#offer-form').onsubmit = publishOffer;
   $('#verify-form').onsubmit = verifyPickup;
   const kind = $('#offer-form [name="kind"]');
@@ -990,21 +1007,6 @@ function renderImpact() {
     <a class="btn secondary impact-link" href="#discover">Explore available bags <span aria-hidden="true">↗</span></a>`;
 }
 
-$('#about-button').onclick = () => {
-  openModal(`<div class="modal-copy about">
-    <h2 id="modal-title" class="modal-title">About FoodShare</h2>
-    <p>A Project Management endterm prototype by Ruslan Bolatbekuly, Ayana Markhabat, Abilmansur Kassymov and Balgyn Yermakhanbet. Group SE-2404. Instructor Alimova Balaussa.</p>
-    <h3>Demo data</h3>
-    <p>Live listings are reserved online and paid at the café. Listings marked Demo simulate the whole flow. ${mode === 'shared' ? 'Offers and collection totals are shared. Guest demo tickets and favorites are available in the browser where you saved them.' : 'Your offers and orders are saved in this browser.'}</p>
-    <h3>Credits</h3>
-    <p>Illustrative photos from <a href="https://unsplash.com" target="_blank" rel="noopener">Unsplash</a>. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. QR generator by Kazuhiko Arase, MIT license.</p>
-    ${mode === 'local' ? `<h3>Restart the demonstration</h3>
-    <p>Reset removes offers and reservations saved in this browser and restores the four example bags.</p>
-    <button class="btn danger" id="reset-demo">Reset demo data</button>` : ''}
-  </div>`);
-  $('#reset-demo')?.addEventListener('click', confirmReset);
-};
-
 function confirmReset() {
   openModal(`<div class="modal-copy">
     <h2 id="modal-title" class="modal-title">Start the demo again?</h2>
@@ -1050,6 +1052,12 @@ window.addEventListener('hashchange', () => {
   }
   window.scrollTo(0, 0);
 });
+
+for (const link of all('.brand[href="#discover"]')) {
+  link.addEventListener('click', () => {
+    if (location.hash === '#discover') window.scrollTo(0, 0);
+  });
+}
 
 window.addEventListener('storage', event => {
   if (event.key !== STORAGE_KEY || mode !== 'local') return;

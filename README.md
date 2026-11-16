@@ -41,16 +41,7 @@ The app is a classroom demo. A QR code encodes a pickup token for the café to e
 
 ## Credits
 
-Illustrative food photographs are downloaded from Unsplash:
-
-- Bread: https://images.unsplash.com/photo-1509440159596-0249088772ff
-- Salad: https://images.unsplash.com/photo-1546069901-ba9599a7e63c
-- Pastries: https://images.unsplash.com/photo-1517433367423-c7e5b0f35086
-- Produce: https://images.unsplash.com/photo-1518843875459-f738682238a6
-
-The kitchen table hero photograph was generated for this redesign.
-
-Unsplash license: https://unsplash.com/license. Images do not depict actual FoodShare partner businesses.
+The hero, catalogue photographs and pickup guide illustrations were generated for FoodShare. The catalogue photographs depict illustrative food.
 
 Map data: © OpenStreetMap contributors, https://www.openstreetmap.org/copyright.
 
