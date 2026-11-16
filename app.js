@@ -1,4 +1,4 @@
-import { STORAGE_KEY, money, seedState, nextDate, astanaDate, pickupTime, expires, addOffer, reserve, cancel, collect, impact, updateAvailability } from './domain.js';
+import { STORAGE_KEY, money, seedState, includeExtraSamples, nextDate, astanaDate, pickupTime, expires, addOffer, reserve, cancel, collect, impact, updateAvailability } from './domain.js';
 import { pickupAddress, pickupCalendar, pickupMap } from './pickup.js';
 
 const $ = selector => document.querySelector(selector);
@@ -18,6 +18,14 @@ const pickupSteps = [
 ];
 const header = $('.site-header');
 const nav = $('.main-nav');
+const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+const scrollReveal = new IntersectionObserver(entries => {
+  for (const { isIntersecting, target } of entries) {
+    if (!isIntersecting) continue;
+    if (!motionPreference.matches) target.classList.add('scroll-entered');
+    scrollReveal.unobserve(target);
+  }
+}, { rootMargin: '0px 0px -20px 0px', threshold: .12 });
 let pointedLink;
 let highlightedLink;
 const categories = ['All food', 'Bakery', 'Meals', 'Produce'];
@@ -65,12 +73,16 @@ function acceptShared(next) {
 async function connect(initial = false) {
   if (apiBusy) return;
   apiBusy = true;
-  const banner = $('#connection-status');
+  const connectionStatus = $('#connection-status');
   try {
     const response = await fetch('./api/state', { cache: 'no-store' });
     if (initial && response.status === 404) {
       mode = 'local';
-      banner.textContent = 'Astana · Reservations are saved in this browser';
+      const updated = includeExtraSamples(state);
+      if (updated !== state) {
+        state = updated;
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+      }
       $('#preview-copy').textContent = 'Offers, reservations and payments in this version are simulated. Your activity is saved in this browser.';
       $('#shared-site-link').hidden = !location.hostname.endsWith('.github.io');
       render();
@@ -80,10 +92,10 @@ async function connect(initial = false) {
     const next = await response.json();
     if (next?.version !== 1 || !Array.isArray(next.offers) || !Array.isArray(next.orders)) throw Error('Invalid catalogue');
     mode = 'shared';
-    banner.textContent = 'Astana · Surplus food from local cafés';
+    connectionStatus.textContent = '';
     acceptShared(next);
   } catch {
-    banner.textContent = 'Shared catalogue is temporarily unavailable. Retrying…';
+    connectionStatus.textContent = 'Shared catalogue is temporarily unavailable. Retrying…';
     if (initial) main.innerHTML = '<p class="loading-message" role="status">The shared catalogue is reconnecting…</p>';
   } finally {
     apiBusy = false;
@@ -137,8 +149,18 @@ new ResizeObserver(() => {
   document.documentElement.style.setProperty('--header-offset', header.offsetHeight + 'px');
   positionNav(highlightedLink);
 }).observe(header);
-const headerObserver = new IntersectionObserver(([entry]) => header.classList.toggle('pinned', !entry.isIntersecting));
-headerObserver.observe($('#connection-status'));
+function updatePinnedHeader() {
+  header.classList.toggle('pinned', window.scrollY > 6);
+}
+window.addEventListener('scroll', updatePinnedHeader, { passive: true });
+updatePinnedHeader();
+
+function watchScrollEntries(root, selector) {
+  if (motionPreference.matches) return;
+  for (const item of root.querySelectorAll(selector)) {
+    if (!item.classList.contains('scroll-entered')) scrollReveal.observe(item);
+  }
+}
 
 function updateNav() {
   for (const link of all('[data-nav]')) {
@@ -160,11 +182,16 @@ function updateNav() {
 }
 
 function render() {
-  const changed = renderedView !== currentView();
-  renderedView = currentView();
+  const next = currentView();
+  const changed = renderedView !== next;
+  const routes = Object.keys(views);
+  main.dataset.direction = routes.indexOf(next) < routes.indexOf(renderedView) ? 'back' : 'forward';
+  renderedView = next;
   updateNav();
   main.classList.toggle('route-entry', changed);
+  scrollReveal.disconnect();
   views[renderedView]();
+  watchScrollEntries(main, '.food-card, .pickup-steps li, .order-row, .metric, .impact-detail');
 }
 
 function refreshState() {
@@ -407,6 +434,7 @@ function updateFilterControls() {
 function renderResults() {
   const offers = visibleOffers();
   const target = $('#results');
+  for (const previousCard of target.querySelectorAll('.food-card')) scrollReveal.unobserve(previousCard);
   const count = `${offers.length} ${offers.length === 1 ? 'offer' : 'offers'} available`;
   if ($('#result-count').textContent !== count) $('#result-count').textContent = count;
   $('#view-toggle').textContent = viewMode === 'list' ? 'Map view' : 'List view';
@@ -441,6 +469,7 @@ function renderResults() {
   }
 
   target.innerHTML = `<div class="cards">${offers.map(card).join('')}</div>`;
+  watchScrollEntries(target, '.food-card');
   for (const button of all('[data-offer]')) button.onclick = () => showOffer(button.dataset.offer);
   for (const button of all('[data-save]')) button.onclick = () => {
     const id = button.dataset.save;
@@ -779,6 +808,7 @@ function renderCafe() {
               <label class="full">Illustrative photograph<select name="image">
                 <option value="assets/bread.jpg">Artisan bread</option><option value="assets/pastry.jpg">Pastries</option>
                 <option value="assets/salad.jpg">Fresh meal</option><option value="assets/produce.jpg">Vegetables</option>
+                <option value="assets/apple-loaf.jpg">Apple cinnamon loaf</option><option value="assets/lentil-bowl.jpg">Lentil bowl</option>
               </select></label>
               <label class="full">Or upload a photo <span class="micro">JPG, PNG or WebP, up to 1 MB.</span>
                 <input name="upload" type="file" accept="image/jpeg,image/png,image/webp">
@@ -1015,7 +1045,7 @@ function renderImpact() {
 function confirmReset() {
   openModal(`<div class="modal-copy">
     <h2 id="modal-title" class="modal-title">Reset sample data?</h2>
-    <p class="modal-body">This clears the offers and orders saved in this browser and restores the four example bags.</p>
+    <p class="modal-body">This clears the offers and orders saved in this browser and restores the sample catalogue.</p>
     <button id="confirm-reset" class="btn danger dialog-confirm">Reset data on this browser</button>
     <p class="error" id="reset-error" role="alert"></p>
   </div>`);
@@ -1032,7 +1062,7 @@ function confirmReset() {
 
 function scrollToOffers() {
   $('#offers-title')?.focus({ preventScroll: true });
-  $('#offers')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  $('#offers')?.scrollIntoView({ behavior: motionPreference.matches ? 'instant' : 'smooth' });
 }
 
 function showLinkedOffer() {
@@ -1056,12 +1086,12 @@ window.addEventListener('hashchange', () => {
     render();
     main.focus({ preventScroll: true });
   }
-  window.scrollTo(0, 0);
+  window.scrollTo({ top: 0, behavior: 'instant' });
 });
 
 for (const link of all('.brand[href="#discover"]')) {
   link.addEventListener('click', () => {
-    if (location.hash === '#discover') window.scrollTo(0, 0);
+    if (location.hash === '#discover') window.scrollTo({ top: 0, behavior: motionPreference.matches ? 'instant' : 'smooth' });
   });
 }
 
