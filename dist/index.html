@@ -15,9 +15,15 @@
   <a href="#main" class="skip-link">Skip to content</a>
   <div class="demo-bar" id="connection-status" role="status">Student demo · Fictional cafés · Simulated orders and payments</div>
   <header class="site-header">
-    <a class="brand" href="#discover" aria-label="FoodShare home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M26 5C12 4 4 12 7 23c11 4 20-4 19-18Z" fill="currentColor"/><path d="m8 25 12-12" stroke="#f7f6ef" stroke-width="2" fill="none"/></svg>foodshare<span>.</span></a>
-    <nav aria-label="Main navigation"><a href="#discover" data-nav="discover">Discover</a><a href="#pickups" data-nav="pickups">My pickups <span id="pickup-count"></span></a><a href="#cafe" data-nav="cafe">Café workspace</a><a href="#impact" data-nav="impact">Our impact</a></nav>
-    <span class="location">Astana, KZ</span>
+    <a class="brand" href="#discover" aria-label="FoodShare home"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M26 5C12 4 4 12 7 23c11 4 20-4 19-18Z" fill="currentColor"/><path d="m8 25 12-12" stroke="#f7f6ef" stroke-width="2" fill="none"/></svg></span>foodshare<span>.</span></a>
+    <nav class="main-nav" aria-label="Main navigation">
+      <span class="nav-indicator" aria-hidden="true"></span>
+      <a href="#discover" data-nav="discover"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg><span>Discover</span></a>
+      <a href="#pickups" data-nav="pickups"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14v10H5zM9 8V7a3 3 0 0 1 6 0v1m-6 5h6"/></svg><span>My pickups</span><span id="pickup-count"></span></a>
+      <a href="#cafe" data-nav="cafe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16l-1.5-3h-13L4 8Zm1 0v11h14V8m-9 11v-5h4v5M4 11h16"/></svg><span>Café workspace</span></a>
+      <a href="#impact" data-nav="impact"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 5C9 5 5 9 6 16c6 3 13 0 13-11ZM5 19l8-7"/></svg><span>Our impact</span></a>
+    </nav>
+    <div class="header-aside"><span class="location">Astana, KZ</span><a class="account-link" id="account-link" target="_top" hidden></a></div>
   </header>
   <main id="main" tabindex="-1"></main>
   <footer><div class="footer-content"><a class="brand" href="#discover">foodshare.</a><button class="text-button" id="about-button">About this prototype</button><span>SE-2404 · Project Management</span></div></footer>

@@ -1,4 +1,5 @@
 import { STORAGE_KEY, money, seedState, nextDate, astanaDate, pickupTime, expires, addOffer, reserve, cancel, collect, impact, updateAvailability } from './domain.js';
+import { pickupCalendar, pickupMap } from './pickup.js';
 
 const $ = selector => document.querySelector(selector);
 const all = selector => [...document.querySelectorAll(selector)];
@@ -7,8 +8,12 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
 })[char]);
 const main = $('#main');
 const modal = $('#modal');
+const header = $('.site-header');
+const nav = $('.main-nav');
+let pointedLink;
+let highlightedLink;
 const categories = ['All food', 'Bakery', 'Meals', 'Produce'];
-const filters = { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100, sort: 'distance', day: '', saved: false };
+const filters = { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100, sort: 'distance', day: '', kind: '', saved: false };
 const favoritesKey = 'foodshare-favorites-v1';
 const views = { discover: renderDiscover, pickups: renderPickups, cafe: renderCafe, impact: renderImpact };
 let state = seedState();
@@ -41,7 +46,8 @@ function acceptShared(next) {
   if (next.revision < state.revision) return;
   const packed = JSON.stringify(next);
   if (snapshot === packed) return;
-  const accessChanged = state.operator !== next.operator || state.signedIn !== next.signedIn;
+  const accessChanged = state.operator !== next.operator || state.signedIn !== next.signedIn
+    || state.admin !== next.admin || state.operatorCafe !== next.operatorCafe;
   snapshot = packed;
   state = next;
   if (accessChanged && currentView() === 'cafe') render();
@@ -64,7 +70,7 @@ async function connect(initial = false) {
     const next = await response.json();
     if (next?.version !== 1 || !Array.isArray(next.offers) || !Array.isArray(next.orders)) throw Error('Invalid catalogue');
     mode = 'shared';
-    banner.textContent = 'Live demo · Fictional cafés and simulated payments';
+    banner.textContent = 'Astana · Live offers are paid at pickup · Demo offers are marked';
     acceptShared(next);
   } catch {
     banner.textContent = 'Shared catalogue is temporarily unavailable. Retrying…';
@@ -97,6 +103,33 @@ function currentView() {
   return Object.hasOwn(views, route) ? route : 'discover';
 }
 
+function positionNav(link = pointedLink ?? nav.querySelector(':focus-visible') ?? nav.querySelector('.active')) {
+  if (!link) return;
+  nav.style.setProperty('--nav-x', link.offsetLeft + 'px');
+  nav.style.setProperty('--nav-width', link.offsetWidth + 'px');
+  nav.dataset.ready = '';
+  highlightedLink = link;
+}
+
+nav.addEventListener('pointerover', event => {
+  const link = event.target.closest('a');
+  if (event.pointerType !== 'mouse' || !link || link === pointedLink) return;
+  pointedLink = link;
+  positionNav(link);
+});
+nav.addEventListener('pointerleave', () => {
+  pointedLink = null;
+  positionNav();
+});
+nav.addEventListener('focusin', event => positionNav(event.target));
+nav.addEventListener('focusout', () => queueMicrotask(() => positionNav()));
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--header-offset', header.offsetHeight + 'px');
+  positionNav(highlightedLink);
+}).observe(header);
+const headerObserver = new IntersectionObserver(([entry]) => header.classList.toggle('pinned', !entry.isIntersecting));
+headerObserver.observe($('#connection-status'));
+
 function updateNav() {
   for (const link of all('[data-nav]')) {
     const active = link.dataset.nav === currentView();
@@ -106,11 +139,21 @@ function updateNav() {
   }
   const activeOrders = state.orders.filter(o => o.status === 'reserved' && expires(o) > Date.now());
   $('#pickup-count').textContent = activeOrders.length || '';
+  const account = $('#account-link');
+  account.hidden = mode !== 'shared' || !state.authEnabled;
+  if (!account.hidden) {
+    account.textContent = state.signedIn ? 'Sign out' : 'Sign in';
+    const route = state.signedIn ? '/signout-with-chatgpt' : '/signin-with-chatgpt';
+    account.href = route + '?return_to=' + encodeURIComponent('/#' + currentView());
+  }
+  positionNav();
 }
 
 function render() {
+  const changed = renderedView !== currentView();
   renderedView = currentView();
   updateNav();
+  main.classList.toggle('route-entry', changed);
   views[renderedView]();
 }
 
@@ -186,6 +229,16 @@ function discount(offer) {
   return percent > 0 ? `<span class="discount">${percent}% off</span>` : '';
 }
 
+function listingBadge(offer) {
+  return offer.kind === 'pilot'
+    ? '<span class="listing-tag live">Pay at pickup</span>'
+    : '<span class="listing-tag">Demo</span>';
+}
+
+function distanceLabel(offer) {
+  return Number.isFinite(offer.distance) ? `~${offer.distance.toFixed(1)} km` : 'Astana';
+}
+
 function visibleOffers() {
   const needle = filters.query.trim().toLowerCase();
   const now = Date.now();
@@ -193,13 +246,14 @@ function visibleOffers() {
     : filters.day === '2' ? nextDate() : localDate();
   return state.offers.filter(o => o.stock > 0 && !o.paused && expires(o) > now
     && (!day || o.date === day) && (!filters.saved || favorites.has(o.id))
+    && (!filters.kind || (o.kind ?? 'demo') === filters.kind)
     && (filters.category === 'All food' || o.category === filters.category)
-    && o.price <= filters.maxPrice && o.distance <= filters.maxDistance
+    && o.price <= filters.maxPrice && (filters.maxDistance === 100 || Number.isFinite(o.distance) && o.distance <= filters.maxDistance)
     && `${o.cafe} ${o.title} ${o.category}`.toLowerCase().includes(needle))
     .sort((a, b) => {
       if (filters.sort === 'price') return a.price - b.price;
       if (filters.sort === 'pickup') return pickupTime(a) - pickupTime(b);
-      return a.distance - b.distance;
+      return (a.distance ?? Infinity) - (b.distance ?? Infinity) || pickupTime(a) - pickupTime(b);
     });
 }
 
@@ -216,13 +270,14 @@ function card(offer) {
         <span class="stock">${bags(offer.stock)} left</span>
       </div>
       <div class="card-content">
-        <div class="card-cafe"><span>${esc(offer.cafe)}</span><span>~${offer.distance.toFixed(1)} km</span></div>
+        <div class="card-cafe"><span>${esc(offer.cafe)}</span><span>${distanceLabel(offer)}</span></div>
         <h3>${esc(offer.title)}</h3>
         <p class="pickup-time">Pickup ${pickup(offer)}</p>
         <div class="card-bottom">
           <div>
             <span class="price">${money(offer.price)}</span>
             <div class="price-meta"><s class="old-price"><span class="sr-only">Original price </span>${money(offer.original)}</s>${discount(offer)}</div>
+            ${listingBadge(offer)}
           </div>
           <div class="card-actions">
             <button class="save-btn" type="button" data-save="${esc(offer.id)}" aria-pressed="${favorites.has(offer.id)}" aria-label="Save ${esc(offer.title)}">
@@ -254,7 +309,7 @@ function renderDiscover() {
       </div>
       <div class="browse-tools">
         <div class="search-bar">
-          <label class="search"><span class="sr-only">Search offers</span><input type="search" id="search" placeholder="Search for a café, pastry or meal"></label>
+          <label class="search"><span class="sr-only">Search offers</span><input type="search" id="search" placeholder="Search food or cafés"></label>
           <button class="btn secondary" id="view-toggle"></button>
         </div>
         <div class="categories" role="group" aria-label="Food category">
@@ -262,7 +317,7 @@ function renderDiscover() {
         </div>
       </div>
       <details class="filter-panel">
-        <summary>Pickup, price and distance <span id="active-filters"></span></summary>
+        <summary>More filters <span id="active-filters"></span></summary>
         <div class="filters">
           <label>Pickup day<select id="day-filter"><option value="">Any day</option><option value="1">Today</option><option value="2">Tomorrow</option></select></label>
           <label>Max. price<select id="price-filter">
@@ -276,6 +331,7 @@ function renderDiscover() {
           <label>Sort by<select id="sort">
             <option value="distance">Nearest first</option><option value="price">Lowest price</option><option value="pickup">Soonest pickup</option>
           </select></label>
+          <label>Offer type<select id="kind-filter"><option value="">All offers</option><option value="pilot">Pay at pickup</option><option value="demo">Demo only</option></select></label>
         </div>
       </details>
       <div id="results"></div>
@@ -301,6 +357,7 @@ function renderDiscover() {
   $('#price-filter').onchange = event => { filters.maxPrice = Number(event.target.value); renderResults(); };
   $('#distance-filter').onchange = event => { filters.maxDistance = Number(event.target.value); renderResults(); };
   $('#day-filter').onchange = event => { filters.day = event.target.value; renderResults(); };
+  $('#kind-filter').onchange = event => { filters.kind = event.target.value; renderResults(); };
   $('#sort').onchange = event => { filters.sort = event.target.value; renderResults(); };
   $('#saved-toggle').onclick = () => {
     filters.saved = !filters.saved;
@@ -319,6 +376,7 @@ function updateFilterControls() {
   $('#distance-filter').value = String(filters.maxDistance);
   $('#sort').value = filters.sort;
   $('#day-filter').value = filters.day;
+  $('#kind-filter').value = filters.kind;
   for (const button of all('[data-category]')) {
     const selected = button.dataset.category === filters.category;
     button.classList.toggle('selected', selected);
@@ -336,18 +394,20 @@ function renderResults() {
   saved.textContent = favorites.size ? `Saved (${favorites.size})` : 'Saved';
   saved.setAttribute('aria-pressed', filters.saved);
   saved.classList.toggle('selected', filters.saved);
-  const countFilters = Number(Boolean(filters.day)) + Number(filters.maxPrice !== 1000000) + Number(filters.maxDistance !== 100);
+  const countFilters = Number(Boolean(filters.day)) + Number(Boolean(filters.kind)) + Number(filters.maxPrice !== 1000000) + Number(filters.maxDistance !== 100);
   $('#active-filters').textContent = countFilters ? `(${countFilters})` : '';
 
   if (offers.length === 0) {
+    const available = state.offers.some(o => o.stock > 0 && !o.paused && expires(o) > Date.now());
     target.innerHTML = `
       <div class="empty">
-        <h3>${filters.saved ? 'No saved bags available' : 'No bags match your filters'}</h3>
-        <p>${filters.saved ? 'Save a bag to find it here while it’s available.' : 'Try another day, category or distance.'}</p>
-        <button class="btn secondary" id="clear-filters">${filters.saved ? 'Browse all bags' : 'Clear filters'}</button>
+        <h3>${!available ? 'No bags are available right now' : filters.saved ? 'No saved bags available' : 'No bags match your filters'}</h3>
+        <p>${!available ? 'New listings will appear here when cafés publish their next pickup windows.' : filters.saved ? 'Save a bag to find it here while it’s available.' : 'Try another day, category or distance.'}</p>
+        ${available ? `<button class="btn secondary" id="clear-filters">${filters.saved ? 'Browse all bags' : 'Clear filters'}</button>` : ''}
       </div>`;
+    if (!available) return;
     $('#clear-filters').onclick = () => {
-      Object.assign(filters, { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100, day: '', saved: false });
+      Object.assign(filters, { category: 'All food', query: '', maxPrice: 1000000, maxDistance: 100, day: '', kind: '', saved: false });
       updateFilterControls();
       renderResults();
       $('#search').focus();
@@ -382,22 +442,22 @@ function renderMap(target, offers) {
   const chosen = offers.find(o => o.id === mapOffer) ?? offers[0];
   mapOffer = chosen.id;
   const marker = encodeURIComponent(`${chosen.lat},${chosen.lng}`);
-  const lat = encodeURIComponent(chosen.lat);
-  const lng = encodeURIComponent(chosen.lng);
+  const hasPin = Number.isFinite(chosen.lat) && Number.isFinite(chosen.lng);
   target.innerHTML = `
     <div class="map-layout">
-      <div class="map-choices" role="group" aria-label="Demo pickup locations">
+      <div class="map-choices" role="group" aria-label="Pickup locations">
         ${offers.map(o => `
           <button class="map-choice ${o.id === mapOffer ? 'selected' : ''}" data-map="${esc(o.id)}" aria-pressed="${o.id === mapOffer}">
-            <strong>${esc(o.cafe)}</strong><span>${money(o.price)} · ~${o.distance.toFixed(1)} km</span>
+            <strong>${esc(o.cafe)}</strong><span>${money(o.price)} · ${distanceLabel(o)}</span>
           </button>`).join('')}
         <button class="btn" id="map-reserve">View this bag <span aria-hidden="true">↗</span></button>
       </div>
       <div>
-        <iframe title="Approximate demo pickup location on OpenStreetMap" loading="lazy"
-          src="https://www.openstreetmap.org/export/embed.html?bbox=71.405%2C51.115%2C71.455%2C51.142&amp;layer=mapnik&amp;marker=${marker}"></iframe>
-        <p class="micro">Fictional pickup location.
-          <a href="https://www.openstreetmap.org/?mlat=${lat}&amp;mlon=${lng}#map=16/${lat}/${lng}" target="_blank" rel="noopener">Open on OpenStreetMap</a>.
+        ${hasPin ? `<iframe title="Approximate demo pickup location on OpenStreetMap" loading="lazy"
+          src="https://www.openstreetmap.org/export/embed.html?bbox=71.405%2C51.115%2C71.455%2C51.142&amp;layer=mapnik&amp;marker=${marker}"></iframe>`
+          : `<div class="empty"><h3>${esc(chosen.cafe)}</h3><p>${esc(chosen.address)}</p></div>`}
+        <p class="micro">
+          <a href="${esc(pickupMap(chosen))}" target="_blank" rel="noopener">Open pickup address on OpenStreetMap</a>.
           Map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>.
         </p>
       </div>
@@ -414,7 +474,15 @@ function renderMap(target, offers) {
 
 function showOffer(id) {
   const offer = state.offers.find(o => o.id === id);
-  if (!offer) return;
+  if (!offer || offer.paused || offer.stock <= 0 || expires(offer) <= Date.now()) {
+    openModal(`<div class="modal-copy"><h2 class="modal-title" id="modal-title">This bag is unavailable</h2>
+      <p class="modal-body">It may have sold out or its pickup window may have ended.</p>
+      <a class="btn dialog-confirm" id="browse-available" href="#offers">See available bags</a></div>`);
+    $('#browse-available').onclick = () => modal.close();
+    return;
+  }
+  const live = offer.kind === 'pilot';
+  const signIn = live && !state.signedIn;
   openModal(`
     <img class="modal-photo" src="${esc(offer.image)}" alt="Illustrative food photograph">
     <div class="modal-copy offer-copy">
@@ -424,25 +492,51 @@ function showOffer(id) {
         <strong>${money(offer.price)} per bag</strong>
         <s class="old-price"><span class="sr-only">Original price </span>${money(offer.original)}</s>
         ${discount(offer)}
+        ${listingBadge(offer)}
       </div>
       <p class="modal-body">${esc(offer.description)}</p>
       <div class="modal-facts">
         <div><strong>When and where</strong>${pickup(offer)}<br>${esc(offer.address)}</div>
         <div><strong>Ingredients and allergens</strong>${esc(offer.allergens)}</div>
       </div>
-      <p class="micro">Estimated ${offer.kg.toFixed(1)} kg per bag. Contents may vary. This reservation simulates payment.</p>
-      <form id="reserve-form">
+      <div class="offer-links">
+        <a class="text-button" href="${esc(pickupMap(offer))}" target="_blank" rel="noopener">Pickup map ↗</a>
+        <button class="text-button" id="share-offer" type="button">Copy offer link</button>
+      </div>
+      <p class="micro share-feedback" id="share-feedback" role="status"></p>
+      <p class="micro">Estimated ${offer.kg.toFixed(1)} kg per bag. Contents may vary. ${live ? 'Pay the café when you collect the bag.' : 'This reservation simulates payment.'}</p>
+      ${signIn ? `<a class="btn dialog-confirm" href="/signin-with-chatgpt?return_to=${encodeURIComponent('/#offer/' + id)}" target="_top">Sign in to reserve</a>`
+        : `<form id="reserve-form">
         <label class="check-row"><input type="checkbox" id="allergen-confirm" required>
-          <span>I’ve read the allergen information and understand this is a demo order.</span>
+          <span>${live ? 'I’ve read the allergen information and will pay at pickup.' : 'I’ve read the allergen information and understand this is a demo order.'}</span>
         </label>
         <div class="checkout">
           <label>Bags<input type="number" id="quantity" min="1" max="${offer.stock}" value="1" required></label>
-          <div><div class="micro">Demo total · ${bags(offer.stock)} left</div><output class="price" id="total" for="quantity">${money(offer.price)}</output></div>
-          <button class="btn" type="submit">Reserve demo bag</button>
+          <div><div class="micro">${live ? 'Due at pickup' : 'Demo total'} · ${bags(offer.stock)} left</div><output class="price" id="total" for="quantity">${money(offer.price)}</output></div>
+          <button class="btn" type="submit">${live ? 'Reserve bag' : 'Reserve demo bag'}</button>
         </div>
         <p id="reserve-error" class="error" role="alert"></p>
-      </form>
+      </form>`}
     </div>`);
+  $('#share-offer').onclick = async () => {
+    const url = new URL(location.origin + location.pathname);
+    url.hash = 'offer/' + encodeURIComponent(id);
+    const feedback = $('#share-feedback');
+    try {
+      await navigator.clipboard.writeText(url.href);
+      feedback.textContent = 'Offer link copied.';
+    } catch {
+      const link = document.createElement('a');
+      link.href = url.href;
+      link.textContent = 'Open the direct offer link';
+      link.target = '_blank';
+      link.rel = 'noopener';
+      feedback.replaceChildren(link);
+    }
+  };
+  if (signIn) return;
+  let requestId;
+  let requestedQty;
   $('#quantity').oninput = event => {
     $('#total').textContent = money(offer.price * Math.max(0, Number(event.target.value) || 0));
     $('#reserve-error').textContent = '';
@@ -453,10 +547,12 @@ function showOffer(id) {
     const button = form.querySelector('[type="submit"]');
     const errorMessage = $('#reserve-error');
     const qty = Number($('#quantity').value);
+    if (requestedQty !== qty) requestId = crypto.randomUUID();
+    requestedQty = qty;
     button.disabled = true;
     errorMessage.textContent = '';
     try {
-      const result = await perform('reserve', { id, qty, allergensConfirmed: $('#allergen-confirm').checked }, () => {
+      const result = await perform('reserve', { id, qty, requestId, allergensConfirmed: $('#allergen-confirm').checked }, () => {
         const token = 'FS-' + crypto.randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase();
         commit(reserve(state, id, qty, token));
         return { id: token };
@@ -487,10 +583,14 @@ function showTicket(id, justReserved = false) {
       <div class="ticket-body">
         <div class="qr" id="qr"></div>
         <strong class="ticket-code">${esc(order.token)}</strong>
-        <p class="micro">Show the QR or code at pickup. Simulated payment of ${money(order.total)}.</p>
+        <p class="micro">Show the QR or code at pickup. ${order.kind === 'pilot' ? 'Pay ' + money(order.total) + ' at the café.' : 'Simulated payment of ' + money(order.total) + '.'}</p>
         <div class="ticket-buttons">
           <button class="btn secondary" id="copy-code">Copy code</button>
           <button class="btn" id="go-pickups">${currentView() === 'pickups' ? 'Done' : 'My pickups'}</button>
+        </div>
+        <div class="ticket-action-bar">
+          <a class="text-button" href="${esc(pickupMap(order))}" target="_blank" rel="noopener">Pickup map ↗</a>
+          <button class="text-button" type="button" id="add-calendar">Add to calendar</button>
         </div>
         <p class="micro ticket-feedback" id="ticket-feedback" role="status"></p>
       </div>
@@ -511,6 +611,15 @@ function showTicket(id, justReserved = false) {
     } catch {
       feedback.textContent = 'Copy this code: ' + order.token;
     }
+  };
+  $('#add-calendar').onclick = () => {
+    const calendar = new Blob([pickupCalendar(order)], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(calendar);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'foodshare-pickup.ics';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 500);
   };
   $('#go-pickups').onclick = () => {
     modal.close();
@@ -589,8 +698,8 @@ function renderCafe() {
       <div class="page-heading"><h1>Café workspace</h1><p>Publish bags, manage stock and check pickup codes for the shared catalogue.</p></div>
       <section class="empty">
         <h2>${state.signedIn ? 'Café access is restricted' : 'Sign in to manage offers'}</h2>
-        <p>${state.signedIn ? 'This workspace is available to the FoodShare site owner.' : 'Use the site owner’s ChatGPT account to access the café workspace.'}</p>
-        <a class="btn" href="/signin-with-chatgpt?return_to=%2F%23cafe" target="_top">Sign in with ChatGPT</a>
+        <p>${state.signedIn ? 'Ask the FoodShare owner to grant access for your café.' : 'Sign in with the ChatGPT account approved for your café.'}</p>
+        ${state.signedIn ? '' : '<a class="btn" href="/signin-with-chatgpt?return_to=%2F%23cafe" target="_top">Sign in with ChatGPT</a>'}
       </section>`;
     return;
   }
@@ -602,7 +711,7 @@ function renderCafe() {
     <div class="workspace">
       <section class="panel verify-panel">
         <h2>Confirm a pickup</h2>
-        <p>Enter the code from the buyer’s ticket. Early collection is allowed in this demo.</p>
+        <p>Enter the code from the buyer’s ticket. For live offers, collect payment at pickup before confirming.</p>
         <form class="verify-form" id="verify-form">
           <label>Pickup code<input class="code-input" id="verify-code" placeholder="FS-XXXXXXXX" required maxlength="11" autocomplete="off" spellcheck="false" autocapitalize="characters"></label>
           <button class="btn" type="submit">Verify</button>
@@ -616,8 +725,10 @@ function renderCafe() {
           <fieldset>
             <legend>What’s in the bag?</legend>
             <div class="form-grid">
-              <label>Café name<input name="cafe" value="Qala Bakery" maxlength="100" required></label>
+              <label>Café name<input name="cafe" value="${esc(state.operatorCafe ?? '')}" placeholder="Café or bakery name" maxlength="100" required ${state.operatorCafe ? 'readonly' : ''}></label>
               <label>Category<select name="category"><option>Bakery</option><option>Meals</option><option>Produce</option></select></label>
+              ${mode === 'shared' ? `<label class="full">Offer type<select name="kind"><option value="demo">Demo offer</option><option value="pilot">Live offer · pay at pickup</option></select></label>
+                <label class="check-row full" id="partner-check" hidden><input type="checkbox" name="partnerConfirmed"><span>The café is ready to prepare this offer at the address, time and price below.</span></label>` : ''}
               <label class="full">Offer title<input name="title" placeholder="Evening bread bag" maxlength="100" required></label>
               <label class="full">Description<textarea name="description" maxlength="600" required placeholder="Describe the likely contents."></textarea></label>
               <label class="full">Ingredients and allergens<textarea name="allergens" maxlength="400" required placeholder="Example: wheat, milk and eggs. May contain nuts."></textarea></label>
@@ -638,7 +749,7 @@ function renderCafe() {
               <label class="full">Pickup date<input name="date" type="date" min="${dateMin}" value="${mode === 'shared' ? astanaDate(1) : nextDate()}" required></label>
               <label>Pickup starts<input name="start" type="time" value="18:00" required></label>
               <label>Pickup ends<input name="end" type="time" value="21:00" required></label>
-              <label class="full">Pickup address<input name="address" placeholder="Demo pickup address" maxlength="200" required></label>
+              <label class="full">Pickup address<input name="address" placeholder="Street address and pickup instructions" maxlength="200" required></label>
             </div>
           </fieldset>
           <fieldset>
@@ -654,39 +765,82 @@ function renderCafe() {
             </div>
           </fieldset>
           <p id="offer-error" class="error" role="alert"></p>
-          <button class="btn" type="submit">Publish demo offer <span aria-hidden="true">↗</span></button>
+          <button class="btn" type="submit">Publish offer <span aria-hidden="true">↗</span></button>
         </form>
       </section>
       <div class="workspace-lists">
         <section class="panel" id="pending-list"></section>
         <section class="panel" id="inventory-list"></section>
+        ${state.admin ? `<section class="panel" id="staff-panel">
+          <h2>Café team access</h2>
+          <p>After you add a staff member, they can sign in and manage only their café.</p>
+          <form class="staff-form" id="staff-form">
+            <label>Café name<input name="cafe" maxlength="100" required></label>
+            <label>ChatGPT account email<input name="email" type="email" maxlength="254" required></label>
+            <button class="btn secondary" type="submit">Grant access</button>
+          </form>
+          <p class="error" id="staff-error" role="alert"></p>
+          <div id="staff-list"></div>
+        </section>` : ''}
       </div>
     </div>`;
   renderCafeLists();
   $('#offer-form').onsubmit = publishOffer;
   $('#verify-form').onsubmit = verifyPickup;
+  const kind = $('#offer-form [name="kind"]');
+  if (kind) {
+    const confirmation = $('#partner-check');
+    kind.onchange = () => {
+      confirmation.hidden = kind.value !== 'pilot';
+      confirmation.querySelector('input').required = !confirmation.hidden;
+    };
+    $('#offer-form').onreset = () => queueMicrotask(kind.onchange);
+  }
+  if ($('#staff-form')) $('#staff-form').onsubmit = updateStaff;
+}
+
+async function updateStaff(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const feedback = $('#staff-error');
+  const button = form.querySelector('button');
+  const fields = Object.fromEntries(new FormData(form));
+  const revoke = Boolean(form.dataset.revoke);
+  if (revoke) fields.email = form.dataset.revoke;
+  feedback.textContent = '';
+  button.disabled = true;
+  try {
+    await perform(revoke ? 'revoke' : 'grant', fields);
+    form.reset();
+    toast(revoke ? 'Café access removed.' : 'Café access granted.');
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderCafeLists() {
   if (!$('#inventory-list')) return;
   const now = Date.now();
+  const inventory = state.inventory ?? state.offers;
   const pending = (state.queue ?? state.orders).filter(o => o.status === 'reserved' && expires(o) > now);
   $('#pending-list').innerHTML = `
     <h2>Awaiting collection</h2>
     <p>${pending.length ? `${pending.length} active ${pending.length === 1 ? 'reservation' : 'reservations'}` : 'No active reservations yet.'}</p>
     <div class="mini-list">${pending.map(o => `<div class="mini-row">
-      <div><strong>${esc(o.cafe)}</strong><br><span class="micro">${esc(o.title)} · ${bags(o.qty)}</span></div>
+      <div><strong>${esc(o.cafe)}</strong><br><span class="micro">${esc(o.title)} · ${bags(o.qty)}</span> ${listingBadge(o)}</div>
       <span class="micro">${pickup(o)}</span>
     </div>`).join('')}</div>`;
   $('#inventory-list').innerHTML = `
     <h2>Manage offers</h2>
     <p>Pause a listing to hide it from Discover. Existing pickup tickets remain valid.</p>
-    <div class="mini-list">${state.offers.map(offer => {
+    <div class="mini-list">${inventory.map(offer => {
       const ended = expires(offer) <= now;
       const draft = availabilityDrafts.get(offer.id) ?? { stock: offer.stock, paused: Boolean(offer.paused) };
       return `<div class="stock-listing">
         <div class="mini-row">
-          <div><strong>${esc(offer.title)}</strong><br><span class="micro">${esc(offer.cafe)}${ended ? ' · Ended' : offer.paused ? ' · Paused' : ''}</span></div>
+          <div><strong>${esc(offer.title)}</strong><br><span class="micro">${esc(offer.cafe)}${ended ? ' · Ended' : offer.paused ? ' · Paused' : ''}</span> ${listingBadge(offer)}</div>
           <strong>${bags(offer.stock)}</strong>
         </div>
         ${ended ? '' : `<form class="availability-form" data-availability="${esc(offer.id)}">
@@ -722,6 +876,13 @@ function renderCafeLists() {
       }
     };
   }
+  const staffList = $('#staff-list');
+  if (staffList) {
+    staffList.innerHTML = (state.staff ?? []).map(member => `<div class="mini-row">
+      <div><strong>${esc(member.cafe)}</strong><br><span class="micro">${esc(member.email)}</span></div>
+      <form data-revoke="${esc(member.email)}"><button class="text-button" type="submit">Remove</button></form></div>`).join('');
+    for (const form of all('[data-revoke]')) form.onsubmit = updateStaff;
+  }
 }
 
 async function publishOffer(event) {
@@ -752,6 +913,8 @@ async function publishOffer(event) {
       cafe: String(field.get('cafe')).trim(),
       title: String(field.get('title')).trim(),
       category: String(field.get('category')),
+      kind: String(field.get('kind') ?? 'demo'),
+      partnerConfirmed: field.has('partnerConfirmed'),
       price: Number(field.get('price')),
       original: Number(field.get('original')),
       stock: Number(field.get('stock')),
@@ -769,7 +932,7 @@ async function publishOffer(event) {
     };
     await perform('publish', { offer }, () => commit(addOffer(state, offer)));
     form.reset();
-    toast('Demo offer published in Discover.');
+    toast('Offer published in Discover.');
   } catch (error) {
     errorMessage.textContent = error.message;
   } finally {
@@ -812,7 +975,7 @@ function renderImpact() {
   main.innerHTML = `
     <div class="page-heading">
       <h1>Our impact</h1>
-      <p>Only confirmed pickups count toward these classroom demo totals.</p>
+      <p>Figures below count confirmed demo pickups. ${state.pilotPickups ? `Live offers have ${bags(state.pilotPickups)} collected separately.` : ''}</p>
     </div>
     <section class="metrics" aria-label="Demo impact totals">
       ${metrics.map(([value, label]) => `<div class="panel metric"><strong>${value}</strong><span>${label}</span></div>`).join('')}
@@ -832,7 +995,7 @@ $('#about-button').onclick = () => {
     <h2 id="modal-title" class="modal-title">About FoodShare</h2>
     <p>A Project Management endterm prototype by Ruslan Bolatbekuly, Ayana Markhabat, Abilmansur Kassymov and Balgyn Yermakhanbet. Group SE-2404. Instructor Alimova Balaussa.</p>
     <h3>Demo data</h3>
-    <p>Cafés are fictional and orders and payments are simulated. ${mode === 'shared' ? 'Offers and collection totals are shared. Guest tickets and favorites are available in the browser where you saved them.' : 'Your offers and orders are saved in this browser.'} The QR encodes a demo pickup code.</p>
+    <p>Live listings are reserved online and paid at the café. Listings marked Demo simulate the whole flow. ${mode === 'shared' ? 'Offers and collection totals are shared. Guest demo tickets and favorites are available in the browser where you saved them.' : 'Your offers and orders are saved in this browser.'}</p>
     <h3>Credits</h3>
     <p>Illustrative photos from <a href="https://unsplash.com" target="_blank" rel="noopener">Unsplash</a>. Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. QR generator by Kazuhiko Arase, MIT license.</p>
     ${mode === 'local' ? `<h3>Restart the demonstration</h3>
@@ -861,12 +1024,21 @@ function confirmReset() {
 }
 
 function scrollToOffers() {
-  $('#offers-title').focus({ preventScroll: true });
-  $('#offers').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  $('#offers-title')?.focus({ preventScroll: true });
+  $('#offers')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+}
+
+function showLinkedOffer() {
+  const match = /^#offer\/([\w-]{1,80})$/.exec(location.hash);
+  if (!match || mode === 'connecting') return false;
+  if (renderedView !== 'discover') render();
+  showOffer(match[1]);
+  return true;
 }
 
 window.addEventListener('hashchange', () => {
   if (location.hash === '#main') return;
+  if (showLinkedOffer()) return;
   if (location.hash === '#offers') {
     if (renderedView !== 'discover') render();
     scrollToOffers();
@@ -889,6 +1061,7 @@ window.addEventListener('storage', event => {
 
 main.innerHTML = '<p class="loading-message" role="status">Opening FoodShare…</p>';
 await connect(true);
+showLinkedOffer();
 if (location.hash === '#offers' && $('#offers')) scrollToOffers();
 setInterval(() => {
   if (mode !== 'local' && !document.hidden) void connect();

@@ -40,7 +40,7 @@ export function reserve(state, id, qty, token, now=Date.now()) {
  if(!o||o.paused||expires(o)<=now) throw Error('This offer is no longer available.');
  if(!Number.isInteger(qty)||qty<1||qty>o.stock) throw Error('Choose a quantity within the remaining stock.');
  if(state.orders.some(x=>x.token===token)) throw Error('Please try again with a new pickup code.');
- const order={id:token,token,offerId:id,cafe:o.cafe,title:o.title,image:o.image,address:o.address,date:o.date,start:o.start,end:o.end,utcOffset:o.utcOffset,allergens:o.allergens,qty,total:o.price*qty,originalTotal:o.original*qty,kg:o.kg*qty,status:'reserved',createdAt:now};
+ const order={id:token,token,offerId:id,cafe:o.cafe,title:o.title,kind:o.kind,image:o.image,address:o.address,lat:o.lat,lng:o.lng,date:o.date,start:o.start,end:o.end,utcOffset:o.utcOffset,allergens:o.allergens,qty,total:o.price*qty,originalTotal:o.original*qty,kg:o.kg*qty,status:'reserved',createdAt:now};
  return {...state,offers:state.offers.map(x=>x.id===id?{...x,stock:x.stock-qty}:x),orders:[order,...state.orders]};
 }
 export function cancel(state,id,now=Date.now()) {

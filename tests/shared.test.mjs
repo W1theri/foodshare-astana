@@ -32,14 +32,16 @@ test('two buyer sessions share stock and keep their tickets private; only the ca
   try {
     assert.equal((await act(one, { action: 'availability', id: 'bakery', stock: 1, paused: false })).status, 403);
     assert.equal((await act(café, { action: 'availability', id: 'bakery', stock: 1, paused: false })).status, 200);
-    const purchase = { action: 'reserve', id: 'bakery', qty: 1, allergensConfirmed: true };
+    const purchase = { action: 'reserve', id: 'bakery', qty: 1, requestId: crypto.randomUUID(), allergensConfirmed: true };
     const results = await Promise.all([act(one, purchase), act(two, purchase)]);
     assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
     const buyer = results[0].status === 200 ? one : two;
     const other = buyer === one ? two : one;
     const token = results.find(result => result.status === 200).data.id;
+    assert.equal((await act(buyer, purchase)).data.id, token);
     assert.equal((await state(other)).orders.length, 0);
     assert.equal((await state(buyer)).orders[0].token, token);
+    assert.equal((await state(buyer)).orders[0].requestId, undefined);
     assert.equal((await state(buyer)).offers.find(offer => offer.id === 'bakery').stock, 0);
     assert.equal((await state(café)).queue[0].token, undefined);
     assert.equal((await act(other, { action: 'cancel', id: token })).status, 404);
@@ -64,10 +66,60 @@ test('two buyer sessions share stock and keep their tickets private; only the ca
     const photo = await api('/' + shared.image);
     assert.equal(photo.headers.get('content-type'), 'image/jpeg');
     assert.deepEqual(Buffer.from(await photo.arrayBuffer()), image);
-    const order = await act(other, { ...purchase, id: shared.id });
+    const order = await act(other, { ...purchase, id: shared.id, requestId: crypto.randomUUID() });
     assert.equal(order.status, 200);
     assert.equal((await act(other, { action: 'cancel', id: order.data.id })).status, 200);
     assert.equal((await state(buyer)).offers.find(o => o.id === shared.id).stock, 4);
+  } finally {
+    db.close();
+  }
+});
+
+test('approved staff manage their own café and live bookings follow the signed-in buyer', async () => {
+  const db = await openCatalogue(':memory:');
+  const env = { DB: db, CAFE_OWNER_EMAIL: 'owner@example.test' };
+  const account = (id, email) => ({ 'oai-authenticated-user-id': id, 'oai-authenticated-user-email': email });
+  const admin = account('owner', 'owner@example.test');
+  const staff = account('staff', 'staff@example.test');
+  const buyer = account('buyer', 'buyer@example.test');
+  async function call(headers, body) {
+    const url = origin + (body ? '/api/action' : '/api/state');
+    const params = body
+      ? { method: 'POST', headers: { ...headers, origin, 'content-type': 'application/json' }, body: JSON.stringify(body) }
+      : { headers };
+    const response = await handleApi(new Request(url, params), env);
+    return { status: response.status, data: await response.json() };
+  }
+  try {
+    const grant = { action: 'grant', cafe: 'Pilot bakery', email: 'staff@example.test' };
+    assert.equal((await call(staff, grant)).status, 403);
+    assert.equal((await call(admin, grant)).status, 200);
+    const access = (await call(staff)).data;
+    assert.equal(access.operatorCafe, 'Pilot bakery');
+    assert.equal(access.staff, undefined);
+    assert.equal((await call(staff, { action: 'availability', id: 'bakery', stock: 1, paused: true })).status, 404);
+    const offer = {
+      cafe: 'Another café', kind: 'pilot', title: 'Test pilot bag', category: 'Bakery', price: 900, original: 1600,
+      stock: 3, kg: 0.5, date: astanaDate(1), start: '18:00', end: '21:00', address: 'Test pickup address',
+      description: 'Test contents.', allergens: 'Wheat.',
+    };
+    assert.equal((await call(staff, { action: 'publish', offer })).status, 400);
+    const published = await call(staff, { action: 'publish', offer: { ...offer, partnerConfirmed: true } });
+    assert.equal(published.status, 200);
+    const listing = published.data.state.inventory[0];
+    assert.equal(listing.kind, 'pilot');
+    assert.equal(listing.cafe, 'Pilot bakery');
+    assert.equal(listing.lat, null);
+    const reserve = { action: 'reserve', id: listing.id, qty: 1, allergensConfirmed: true };
+    assert.equal((await call({}, reserve)).status, 401);
+    const ticket = await call(buyer, reserve);
+    assert.equal(ticket.status, 200);
+    assert.equal((await call(buyer)).data.orders[0].kind, 'pilot');
+    assert.equal((await call(staff)).data.queue.length, 1);
+    assert.equal((await call(staff, { action: 'verify', code: ticket.data.id })).status, 409);
+    assert.equal((await call(buyer, { action: 'cancel', id: ticket.data.id })).status, 200);
+    await call(admin, { action: 'revoke', email: 'staff@example.test' });
+    assert.equal((await call(staff)).data.operator, false);
   } finally {
     db.close();
   }
