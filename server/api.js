@@ -4,6 +4,9 @@ const sessionName = 'foodshare_session';
 const seedPhotos = new Set(['assets/bread.jpg', 'assets/pastry.jpg', 'assets/salad.jpg', 'assets/produce.jpg', 'assets/apple-loaf.jpg', 'assets/lentil-bowl.jpg']);
 const maxUpload = 1024 * 1024;
 const maxBody = 1450000;
+const practiceOrigin = 'https://w1theri.github.io';
+const practiceLifetime = 48 * 60 * 60 * 1000;
+const uuid = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -236,9 +239,22 @@ function command(payload, user) {
   return { photo: photo && { id: offerId, ...photo }, apply: state => ({ next: addOffer(state, offer) }) };
 }
 
-async function mutate(db, payload, user) {
+async function readPractice(db, id) {
+  const row = await db.prepare('SELECT revision, document FROM practice_workspaces WHERE id = ? AND expires_at > ?')
+    .bind(id, Date.now()).first();
+  if (!row) throw new ApiError(404, 'This practice session has ended. Start a new one on Discover.');
+  return row;
+}
+
+function practiceView(data, user, revision) {
+  const { staff, ...details } = view(data, user, revision);
+  return { ...details, admin: false };
+}
+
+async function mutate(db, payload, user, practiceId) {
+  const renderState = practiceId ? practiceView : view;
   for (let attempt = 0; attempt < 6; attempt++) {
-    const { revision, document } = await loadRecord(db);
+    const { revision, document } = practiceId ? await readPractice(db, practiceId) : await loadRecord(db);
     const current = JSON.parse(document);
     const { apply, photo } = command(payload, withAccess(current, user));
     let change;
@@ -248,10 +264,14 @@ async function mutate(db, payload, user) {
       if (error instanceof ApiError) throw error;
       throw new ApiError(409, error.message);
     }
-    if (change.next === current) return { state: view(current, user, revision), ...change.result };
+    if (change.next === current) return { state: renderState(current, user, revision), ...change.result };
     const packed = JSON.stringify(change.next);
-    if (packed.length > 700000) throw new ApiError(507, 'FoodShare has reached its storage limit.');
-    const update = db.prepare('UPDATE app_state SET document = ?, revision = revision + 1 WHERE id = 1 AND revision = ?').bind(packed, revision);
+    if (packed.length > (practiceId ? 70000 : 700000)) throw new ApiError(507, 'FoodShare has reached its storage limit.');
+    const update = practiceId
+      ? db.prepare('UPDATE practice_workspaces SET document = ?, revision = revision + 1 WHERE id = ? AND revision = ? AND expires_at > ?')
+        .bind(packed, practiceId, revision, Date.now())
+      : db.prepare('UPDATE app_state SET document = ?, revision = revision + 1 WHERE id = 1 AND revision = ?')
+        .bind(packed, revision);
     let result;
     if (photo) {
       const addPhoto = db.prepare(`INSERT INTO offer_photos (id, mime, content)
@@ -261,9 +281,70 @@ async function mutate(db, payload, user) {
     } else {
       result = await update.run();
     }
-    if (result.meta.changes === 1) return { state: view(change.next, user, revision + 1), ...change.result };
+    if (result.meta.changes === 1) return { state: renderState(change.next, user, revision + 1), ...change.result };
   }
   throw new ApiError(409, 'This offer changed while you were working. Refresh and try again.');
+}
+
+async function handlePractice(request, env, url) {
+  const origin = request.headers.get('origin');
+  if (origin !== practiceOrigin && !(env.LOCAL_DEMO === true && (!origin || origin === url.origin))) {
+    return json({ error: 'Invalid request origin.' }, 403);
+  }
+  const cors = {
+    'Access-Control-Allow-Origin': origin ?? url.origin,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Cache-Control': 'no-store',
+    Vary: 'Origin',
+  };
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+  const reply = (body, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { ...cors, 'Content-Type': 'application/json; charset=utf-8' },
+  });
+  try {
+    const token = request.headers.get('authorization')?.slice(7);
+    if (!request.headers.get('authorization')?.startsWith('Bearer ') || !uuid.test(token ?? '')) {
+      throw new ApiError(401, 'Open this practice session in your browser.');
+    }
+    const owner = fromBytes(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)));
+    const user = { owner, guest: owner, admin: true, authEnabled: false, signedIn: false };
+    const match = /^\/api\/practice\/([^/]+)$/.exec(url.pathname);
+    if (request.method === 'POST' && url.pathname === '/api/practice') {
+      const now = Date.now();
+      const state = seedState();
+      const date = astanaDate(1);
+      state.offers = state.offers.map(offer => ({ ...offer, date, utcOffset: '+05:00' }));
+      const id = crypto.randomUUID();
+      await env.DB.prepare('DELETE FROM practice_workspaces WHERE expires_at <= ?').bind(now).run();
+      const result = await env.DB.prepare(`INSERT INTO practice_workspaces
+        SELECT ?, 0, ?, ? WHERE (SELECT COUNT(*) FROM practice_workspaces) < 500`)
+        .bind(id, JSON.stringify(state), now + practiceLifetime).run();
+      if (result.meta.changes !== 1) throw new ApiError(503, 'Practice sessions are full. Try again later.');
+      return reply({ id }, 201);
+    }
+    if (!match || !uuid.test(match[1])) throw new ApiError(404, 'Practice session not found.');
+    const id = match[1];
+    if (request.method === 'GET') {
+      const row = await readPractice(env.DB, id);
+      return reply(practiceView(JSON.parse(row.document), user, row.revision));
+    }
+    if (request.method !== 'POST' || !request.headers.get('content-type')?.startsWith('application/json')) {
+      throw new ApiError(405, 'Unsupported practice request.');
+    }
+    const input = await readCommand(request);
+    if (!input || !['reserve', 'cancel', 'publish', 'availability', 'verify'].includes(input.action)) {
+      throw new ApiError(400, 'Unknown practice action.');
+    }
+    if (input.action === 'publish' && input.offer) {
+      input.offer = { ...input.offer, kind: 'demo', image: seedPhotos.has(input.offer.image) ? input.offer.image : undefined };
+    }
+    return reply(await mutate(env.DB, input, user, id));
+  } catch (error) {
+    if (error instanceof ApiError) return reply({ error: error.message }, error.status);
+    console.error('FoodShare practice request failed', error.name);
+    return reply({ error: 'Practice sessions are temporarily unavailable.' }, 503);
+  }
 }
 
 async function readCommand(request) {
@@ -296,6 +377,9 @@ async function readCommand(request) {
 
 export async function handleApi(request, env) {
   const url = new URL(request.url);
+  if (url.pathname === '/api/practice' || url.pathname.startsWith('/api/practice/')) {
+    return handlePractice(request, env, url);
+  }
   try {
     const photo = /^\/api\/photos\/([\da-f-]{36})$/.exec(url.pathname);
     if (request.method === 'GET' && photo) {

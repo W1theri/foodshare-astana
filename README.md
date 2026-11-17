@@ -37,7 +37,7 @@ Visitors can reserve sample offers as guests. Live offers require buyer sign-in 
 
 ## GitHub Pages preview
 
-Publish the tracked `dist/` tree to the root of the `gh-pages` branch. GitHub Pages serves a static preview with fictional offers and browser-local reservations. Shared stock, café accounts and live listings use the Sites deployment.
+Publish the tracked `dist/` tree to the root of the `gh-pages` branch. Visitors can try sample offers in their browser or select **Start shared session** to share stock, pickup codes and collection totals across devices. Anyone with the session link can play both roles for 48 hours. Each browser sees only its own pickup tickets. The sessions use a separate database table. Café accounts and live listings use the main Sites catalogue.
 
 ## Boundaries
 

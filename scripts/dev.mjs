@@ -24,7 +24,7 @@ createServer(async (request, response) => {
   if (request.url?.startsWith('/api/')) {
     try {
       const headers = new Headers();
-      for (const key of ['origin', 'cookie', 'content-type', 'content-length']) {
+      for (const key of ['origin', 'cookie', 'authorization', 'content-type', 'content-length']) {
         if (typeof request.headers[key] === 'string') headers.set(key, request.headers[key]);
       }
       const host = request.headers.host;

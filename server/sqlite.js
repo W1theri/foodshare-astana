@@ -15,6 +15,7 @@ export async function openCatalogue(filename) {
       throw error;
     }
   }
+  sqlite.exec(await readFile(new URL('../drizzle/0001_practice_workspaces.sql', import.meta.url), 'utf8'));
   return {
     close: () => sqlite.close(),
     prepare(sql) {
