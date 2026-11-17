@@ -18,6 +18,13 @@ const pickupSteps = [
 ];
 const header = $('.site-header');
 const nav = $('.main-nav');
+const here = new URL(location.href);
+const onPages = here.hostname === 'w1theri.github.io' && here.pathname.startsWith('/foodshare-astana');
+const practiceAvailable = onPages || ['localhost', '127.0.0.1'].includes(here.hostname);
+const practiceId = practiceAvailable ? here.searchParams.get('practice') : null;
+const productionOrigin = 'https://foodshare-astana.inspiringtune5.chatgpt.site';
+const practiceApi = new URL('/api/practice', onPages ? productionOrigin : here.origin);
+let browserPracticeToken;
 const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
 const scrollReveal = new IntersectionObserver(entries => {
   for (const { isIntersecting, target } of entries) {
@@ -70,12 +77,40 @@ function acceptShared(next) {
   else refreshState();
 }
 
+function practiceRequest(path, options = {}) {
+  if (!browserPracticeToken) {
+    try { browserPracticeToken = localStorage.getItem('foodshare-practice-user-v1'); } catch {}
+    if (!browserPracticeToken) {
+      browserPracticeToken = crypto.randomUUID();
+      try { localStorage.setItem('foodshare-practice-user-v1', browserPracticeToken); } catch {}
+    }
+  }
+  const headers = new Headers(options.headers);
+  headers.set('Authorization', 'Bearer ' + browserPracticeToken);
+  return fetch(practiceApi.href + path, { ...options, headers, credentials: 'omit', cache: 'no-store' });
+}
+
+function practiceUrl(id) {
+  const url = new URL(here.href);
+  url.hash = 'offers';
+  if (id) url.searchParams.set('practice', id);
+  else url.searchParams.delete('practice');
+  return url.href;
+}
+
 async function connect(initial = false) {
   if (apiBusy) return;
   apiBusy = true;
   const connectionStatus = $('#connection-status');
   try {
-    const response = await fetch('./api/state', { cache: 'no-store' });
+    const response = practiceId
+      ? await practiceRequest('/' + encodeURIComponent(practiceId))
+      : await fetch('./api/state', { cache: 'no-store' });
+    if (practiceId && response.status === 404) {
+      mode = 'ended';
+      main.innerHTML = `<div class="page-heading"><h1>Practice session ended</h1></div><a class="btn" href="${esc(practiceUrl())}">Back to catalogue</a>`;
+      return;
+    }
     if (initial && response.status === 404) {
       mode = 'local';
       const updated = includeExtraSamples(state);
@@ -91,7 +126,8 @@ async function connect(initial = false) {
     if (!response.ok) throw Error('Shared catalogue unavailable');
     const next = await response.json();
     if (next?.version !== 1 || !Array.isArray(next.offers) || !Array.isArray(next.orders)) throw Error('Invalid catalogue');
-    mode = 'shared';
+    mode = practiceId ? 'practice' : 'shared';
+    if (practiceId) $('#preview-copy').textContent = 'This shared practice session uses sample offers and simulated payments. Anyone with its link can try the buyer and café flows for 48 hours.';
     connectionStatus.textContent = '';
     acceptShared(next);
   } catch {
@@ -104,12 +140,15 @@ async function connect(initial = false) {
 
 async function perform(action, data, offline) {
   if (mode === 'local') return offline();
-  if (mode !== 'shared') throw Error('The shared catalogue is unavailable. Try again when the connection returns.');
-  const response = await fetch('./api/action', {
+  if (mode !== 'shared' && mode !== 'practice') throw Error('The shared catalogue is unavailable. Try again when the connection returns.');
+  const options = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, ...data }),
-  });
+  };
+  const response = mode === 'practice'
+    ? await practiceRequest('/' + encodeURIComponent(practiceId), options)
+    : await fetch('./api/action', options);
   const { state: next, error, ...result } = await response.json().catch(() => ({ error: 'The shared catalogue is unavailable.' }));
   if (!response.ok) {
     void connect();
@@ -283,7 +322,7 @@ function photoUrl(photo) {
 function visibleOffers() {
   const needle = filters.query.trim().toLowerCase();
   const now = Date.now();
-  const day = !filters.day ? '' : mode === 'shared' ? astanaDate(Number(filters.day) - 1)
+  const day = !filters.day ? '' : mode !== 'local' ? astanaDate(Number(filters.day) - 1)
     : filters.day === '2' ? nextDate() : localDate();
   return state.offers.filter(o => o.stock > 0 && !o.paused && expires(o) > now
     && (!day || o.date === day) && (!filters.saved || favorites.has(o.id))
@@ -301,6 +340,50 @@ function visibleOffers() {
 function localDate() {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function practicePanel() {
+  if (!practiceAvailable) return '';
+  return `<aside class="practice-panel" aria-labelledby="practice-title">
+    <div><h3 id="practice-title">${practiceId ? 'Shared practice session' : 'Try FoodShare together'}</h3>
+      <p>${practiceId ? 'Share this link so another device can work with the same catalogue and pick up your reservation using its code.' : 'Start a sample catalogue to try booking and café pickup together on different devices.'}</p></div>
+    <div class="practice-actions">
+      <button type="button" class="btn secondary" id="practice-button">${practiceId ? 'Copy session link' : 'Start shared session'}</button>
+      ${practiceId ? `<a class="text-button" href="${esc(practiceUrl())}">Leave session</a>` : ''}
+    </div>
+    <p class="micro" id="practice-feedback" role="status"></p>
+  </aside>`;
+}
+
+async function practiceClick(event) {
+  const button = event.currentTarget;
+  const feedback = $('#practice-feedback');
+  if (practiceId) {
+    const link = practiceUrl(practiceId);
+    try {
+      await navigator.clipboard.writeText(link);
+      feedback.textContent = 'Session link copied.';
+    } catch {
+      const input = document.createElement('input');
+      input.value = link;
+      input.readOnly = true;
+      input.setAttribute('aria-label', 'Session link');
+      feedback.replaceChildren(input);
+      input.select();
+    }
+    return;
+  }
+  button.disabled = true;
+  feedback.textContent = 'Creating your session…';
+  try {
+    const response = await practiceRequest('', { method: 'POST' });
+    const result = await response.json();
+    if (!response.ok || !result.id) throw Error(result.error ?? 'Unable to create a practice session.');
+    location.assign(practiceUrl(result.id));
+  } catch (error) {
+    feedback.textContent = error.message;
+    button.disabled = false;
+  }
 }
 
 function card(offer) {
@@ -348,6 +431,7 @@ function renderDiscover() {
         <p id="result-count" role="status"></p>
         <button class="chip" id="saved-toggle" type="button"></button>
       </div>
+      ${practicePanel()}
       <div class="browse-tools">
         <div class="search-bar">
           <label class="search"><span class="sr-only">Search offers</span><input type="search" id="search" placeholder="Search food or cafés"></label>
@@ -376,7 +460,7 @@ function renderDiscover() {
         </div>
       </details>
       <div id="results"></div>
-      <p class="micro offers-note">Photos are illustrative. Distances are estimates from central Astana.${mode === 'shared' ? ' Pickup times are in Astana time.' : ''}</p>
+      <p class="micro offers-note">Photos are illustrative. Distances are estimates from central Astana.${mode !== 'local' ? ' Pickup times are in Astana time.' : ''}</p>
     </section>
     <section class="how-it-works" aria-labelledby="steps-title">
       <h2 id="steps-title">How pickup works</h2>
@@ -392,6 +476,7 @@ function renderDiscover() {
       </ol>
     </section>`;
   updateFilterControls();
+  $('#practice-button')?.addEventListener('click', practiceClick);
   for (const button of all('[data-category]')) {
     button.onclick = () => {
       filters.category = button.dataset.category;
@@ -568,7 +653,7 @@ function showOffer(id) {
       </form>`}
     </div>`);
   $('#share-offer').onclick = async () => {
-    const url = new URL(location.origin + location.pathname);
+    const url = new URL(location.href);
     url.hash = 'offer/' + encodeURIComponent(id);
     const feedback = $('#share-feedback');
     try {
@@ -741,7 +826,7 @@ function confirmCancel(id) {
 }
 
 function renderCafe() {
-  const dateMin = mode === 'shared' ? astanaDate() : localDate();
+  const dateMin = mode !== 'local' ? astanaDate() : localDate();
   if (mode === 'shared' && !state.operator) {
     main.innerHTML = `
       <div class="page-heading"><h1>Café workspace</h1><p>Publish bags, manage stock and check pickup codes for the shared catalogue.</p></div>
@@ -755,7 +840,7 @@ function renderCafe() {
   main.innerHTML = `
     <div class="page-heading">
       <h1>Café workspace</h1>
-      <p>Confirm a pickup, publish a surplus bag or change what’s available. Pickup times are in ${mode === 'shared' ? 'Astana' : 'your device’s local'} time.</p>
+      <p>Confirm a pickup, publish a surplus bag or change what’s available. Pickup times are in ${mode !== 'local' ? 'Astana' : 'your device’s local'} time.</p>
       ${mode === 'local' ? '<button class="text-button" type="button" id="reset-demo">Reset sample data</button>' : ''}
     </div>
     <div class="workspace">
@@ -796,7 +881,7 @@ function renderCafe() {
           <fieldset>
             <legend>Pickup details</legend>
             <div class="form-grid">
-              <label class="full">Pickup date<input name="date" type="date" min="${dateMin}" value="${mode === 'shared' ? astanaDate(1) : nextDate()}" required></label>
+              <label class="full">Pickup date<input name="date" type="date" min="${dateMin}" value="${mode !== 'local' ? astanaDate(1) : nextDate()}" required></label>
               <label>Pickup starts<input name="start" type="time" value="18:00" required></label>
               <label>Pickup ends<input name="end" type="time" value="21:00" required></label>
               <label class="full">Pickup address<input name="address" placeholder="Street address and pickup instructions" maxlength="200" required></label>
@@ -810,9 +895,9 @@ function renderCafe() {
                 <option value="assets/salad.jpg">Fresh meal</option><option value="assets/produce.jpg">Vegetables</option>
                 <option value="assets/apple-loaf.jpg">Apple cinnamon loaf</option><option value="assets/lentil-bowl.jpg">Lentil bowl</option>
               </select></label>
-              <label class="full">Or upload a photo <span class="micro">JPG, PNG or WebP, up to 1 MB.</span>
+              ${mode === 'practice' ? '' : `<label class="full">Or upload a photo <span class="micro">JPG, PNG or WebP, up to 1 MB.</span>
                 <input name="upload" type="file" accept="image/jpeg,image/png,image/webp">
-              </label>
+              </label>`}
             </div>
           </fieldset>
           <p id="offer-error" class="error" role="alert"></p>
@@ -1067,7 +1152,7 @@ function scrollToOffers() {
 
 function showLinkedOffer() {
   const match = /^#offer\/([\w-]{1,80})$/.exec(location.hash);
-  if (!match || mode === 'connecting') return false;
+  if (!match || mode === 'connecting' || mode === 'ended') return false;
   if (previewNotice.open) return true;
   if (renderedView !== 'discover') render();
   showOffer(match[1]);
@@ -1075,6 +1160,7 @@ function showLinkedOffer() {
 }
 
 window.addEventListener('hashchange', () => {
+  if (mode === 'ended') return;
   if (location.hash === '#main') return;
   if (showLinkedOffer()) return;
   if (location.hash === '#offers') {
@@ -1117,10 +1203,10 @@ if (!noticeSeen) {
 showLinkedOffer();
 if (location.hash === '#offers' && $('#offers')) scrollToOffers();
 setInterval(() => {
-  if (mode !== 'local' && !document.hidden) void connect();
+  if (mode !== 'local' && mode !== 'ended' && !document.hidden) void connect();
 }, 8000);
 document.addEventListener('visibilitychange', () => {
-  if (mode === 'shared' && !document.hidden) void connect();
+  if ((mode === 'shared' || mode === 'practice') && !document.hidden) void connect();
 });
 setInterval(() => {
   if (renderedView === 'discover' && $('#results') && !modal.open && !$('#results').contains(document.activeElement)) renderResults();

@@ -384,6 +384,17 @@ body:has(dialog[open]) { overflow: hidden; }
 .browse-tools {
   display: grid; gap: .65rem; margin-block: .5rem .6rem;
 }
+.practice-panel {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .55rem 1rem;
+  margin-block: .25rem 1rem; padding: 1rem 1.15rem; border: 1px solid var(--edge);
+  border-radius: var(--radius); background: var(--soft);
+}
+.practice-panel h3 { font: 700 1.3rem/1.1 var(--heading); }
+.practice-panel p { margin-top: .28rem; font-size: .875rem; color: var(--body); }
+.practice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .85rem; }
+#practice-feedback { grid-column: 1 / -1; }
+#practice-feedback:empty { display: none; }
+@media (max-width: 44rem) { .practice-panel { grid-template-columns: 1fr; } }
 .browse-tools .categories { grid-column: 1; }
 .search-bar {
   display: grid; grid-template-columns: minmax(0, 1fr) auto;
